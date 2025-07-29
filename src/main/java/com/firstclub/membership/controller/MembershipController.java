@@ -26,10 +26,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * REST Controller for membership and subscription operations
+ * REST Controller for administrative membership operations
  * 
- * Main controller handling plans, tiers, subscriptions, and analytics.
- * Includes custom health check and analytics endpoints.
+ * Administrative controller for membership system management.
+ * Includes plan/tier management, system-wide subscription operations,
+ * and business analytics endpoints.
  * 
  * Implemented by Shwet Raj
  */
@@ -37,7 +38,7 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/membership")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Membership Management", description = "APIs for managing memberships and subscriptions")
+@Tag(name = "Membership Management", description = "Administrative APIs for membership system management")
 public class MembershipController {
     
     private final MembershipService membershipService;
@@ -53,7 +54,7 @@ public class MembershipController {
     }
     
     @GetMapping("/plans/tier/{tierName}")
-    @Operation(summary = "Get plans by tier", description = "Get all plans for a specific tier")
+    @Operation(summary = "Get plans by tier name", description = "Get all plans for a specific tier by name")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Plans retrieved successfully"),
         @ApiResponse(responseCode = "404", description = "Tier not found")
@@ -63,6 +64,24 @@ public class MembershipController {
         List<MembershipPlanDTO> plans = membershipService.getPlansByTier(tierName);
         log.debug("Retrieved {} plans for tier: {}", plans.size(), tierName);
         return ResponseEntity.ok(plans);
+    }
+    
+    @GetMapping("/plans/tier-id/{tierId}")
+    @Operation(summary = "Get plans by tier ID", description = "Get all plans for a specific tier by ID")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Plans retrieved successfully"),
+        @ApiResponse(responseCode = "404", description = "Tier not found")
+    })
+    public ResponseEntity<List<MembershipPlanDTO>> getPlansByTierId(
+            @Parameter(description = "Tier ID", example = "1") @PathVariable Long tierId) {
+        try {
+            List<MembershipPlanDTO> plans = membershipService.getPlansByTierId(tierId);
+            log.debug("Retrieved {} plans for tier ID: {}", plans.size(), tierId);
+            return ResponseEntity.ok(plans);
+        } catch (Exception e) {
+            log.error("Error retrieving plans for tier ID: {}", tierId, e);
+            throw e;
+        }
     }
     
     @GetMapping("/plans/type/{type}")
@@ -106,6 +125,19 @@ public class MembershipController {
     public ResponseEntity<MembershipTier> getTierByName(
             @Parameter(description = "Tier name", example = "PLATINUM") @PathVariable String name) {
         return membershipService.getTierByName(name)
+            .map(tier -> ResponseEntity.ok(tier))
+            .orElse(ResponseEntity.notFound().build());
+    }
+    
+    @GetMapping("/tiers/id/{id}")
+    @Operation(summary = "Get tier by ID", description = "Get specific tier details by ID")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Tier found"),
+        @ApiResponse(responseCode = "404", description = "Tier not found")
+    })
+    public ResponseEntity<MembershipTier> getTierById(
+            @Parameter(description = "Tier ID", example = "1") @PathVariable Long id) {
+        return membershipService.getTierById(id)
             .map(tier -> ResponseEntity.ok(tier))
             .orElse(ResponseEntity.notFound().build());
     }
@@ -171,7 +203,7 @@ public class MembershipController {
         return ResponseEntity.ok(subscription);
     }
     
-    @PostMapping("/subscriptions/{id}/cancel")
+    @PutMapping("/subscriptions/{id}/cancel")
     @Operation(summary = "Cancel subscription", description = "Cancel active subscription")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Subscription cancelled"),
@@ -201,7 +233,7 @@ public class MembershipController {
         return ResponseEntity.ok(subscription);
     }
     
-    @PostMapping("/subscriptions/{id}/upgrade")
+    @PutMapping("/subscriptions/{id}/upgrade")
     @Operation(summary = "Upgrade subscription", description = "Upgrade to higher tier")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Subscription upgraded"),
@@ -235,8 +267,22 @@ public class MembershipController {
     
     // Health and Analytics endpoints
     @GetMapping("/health")
-    @Operation(summary = "System health check", description = "Get system health and metrics")
-    @ApiResponse(responseCode = "200", description = "System health retrieved")
+    @Operation(
+        summary = "System health check and metrics", 
+        description = """
+            Comprehensive system health check including:
+            • System status and uptime
+            • Database connectivity
+            • Key metrics (users, subscriptions, plans)
+            • Tier distribution analysis
+            • Environment and version information
+            
+            Use this endpoint to monitor system health and get quick overview metrics.
+            """
+    )
+    @ApiResponse(responseCode = "200", description = "System health retrieved successfully")
+    @ApiResponse(responseCode = "503", description = "System is experiencing issues")
+    @Tag(name = "Analytics & Health")
     public ResponseEntity<Map<String, Object>> getSystemHealth() {
         Map<String, Object> health = new HashMap<>();
         
@@ -289,13 +335,23 @@ public class MembershipController {
     }
     
     @GetMapping("/analytics")
-    @Operation(summary = "Membership analytics", description = "Get business analytics and insights")
+    @Operation(
+        summary = "Business analytics and insights", 
+        description = """
+            Get comprehensive business analytics including:
+            • Revenue metrics by tier and plan type
+            • Tier popularity analysis
+            • Plan type distribution
+            • Average revenue per user
+            • Active subscription metrics
+            
+            This endpoint provides key business intelligence for management decisions.
+            """
+    )
     @ApiResponse(responseCode = "200", description = "Analytics retrieved successfully")
+    @Tag(name = "Analytics & Health")
     public ResponseEntity<Map<String, Object>> getAnalytics() {
         Map<String, Object> analytics = new HashMap<>();
-        
-        // System.out.println("DEBUG: Generating analytics report");
-        // used during testing - can be removed later
         
         List<SubscriptionDTO> allSubscriptions = membershipService.getAllSubscriptions();
         List<MembershipPlanDTO> allPlans = membershipService.getActivePlans();

@@ -3,6 +3,7 @@ package com.firstclub.membership.service.impl;
 import com.firstclub.membership.dto.UserDTO;
 import com.firstclub.membership.entity.User;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.repository.SubscriptionRepository;
 import com.firstclub.membership.repository.UserRepository;
 import com.firstclub.membership.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -29,6 +31,7 @@ import java.util.stream.Collectors;
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final SubscriptionRepository subscriptionRepository;
 
     @Override
     public UserDTO createUser(UserDTO userDTO) {
@@ -122,8 +125,13 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(id)
             .orElseThrow(() -> new MembershipException("User not found", "USER_NOT_FOUND"));
             
-        // TODO: Check if user has active subscriptions before deletion
-        // For now, we'll just delete - but this might cause issues
+        // Check if user has active subscriptions before deletion
+        if (subscriptionRepository.hasActiveSubscriptions(user, LocalDateTime.now())) {
+            throw new MembershipException(
+                "Cannot delete user with active subscriptions. Please cancel all active subscriptions first.", 
+                "USER_HAS_ACTIVE_SUBSCRIPTIONS"
+            );
+        }
         
         userRepository.delete(user);
         log.info("User deleted successfully: {}", id);

@@ -63,4 +63,17 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
     @Query("SELECT s FROM Subscription s WHERE s.autoRenewal = true " +
            "AND s.status = 'ACTIVE' AND s.nextBillingDate <= :renewalDate")
     List<Subscription> findSubscriptionsForRenewal(@Param("renewalDate") LocalDateTime renewalDate);
+    
+    /**
+     * Check if user has any active subscriptions
+     * 
+     * Used for validation before user deletion to prevent data integrity issues.
+     * 
+     * @param user the user to check
+     * @param currentTime current timestamp for checking validity
+     * @return true if user has active subscriptions
+     */
+    @Query("SELECT COUNT(s) > 0 FROM Subscription s WHERE s.user = :user " +
+           "AND s.status = 'ACTIVE' AND s.endDate > :currentTime")
+    boolean hasActiveSubscriptions(@Param("user") User user, @Param("currentTime") LocalDateTime currentTime);
 }

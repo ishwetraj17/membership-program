@@ -205,7 +205,18 @@ public class MembershipServiceImpl implements MembershipService {
     @Transactional(readOnly = true)
     public List<MembershipPlanDTO> getPlansByTier(String tierName) {
         MembershipTier tier = tierRepository.findByName(tierName.toUpperCase())
-            .orElseThrow(() -> new MembershipException("Tier not found", "TIER_NOT_FOUND"));
+            .orElseThrow(() -> MembershipException.tierNotFound(tierName));
+            
+        return planRepository.findByTierAndIsActiveTrue(tier).stream()
+            .map(this::convertPlanToDTO)
+            .collect(Collectors.toList());
+    }
+    
+    @Override
+    @Transactional(readOnly = true)
+    public List<MembershipPlanDTO> getPlansByTierId(Long tierId) {
+        MembershipTier tier = tierRepository.findById(tierId)
+            .orElseThrow(() -> MembershipException.tierNotFound("ID: " + tierId));
             
         return planRepository.findByTierAndIsActiveTrue(tier).stream()
             .map(this::convertPlanToDTO)
@@ -239,15 +250,32 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     @Override
+    @Transactional(readOnly = true)
+    public Optional<MembershipTier> getTierById(Long id) {
+        return tierRepository.findById(id);
+    }
+    
+    @Override
     public SubscriptionDTO createSubscription(SubscriptionRequestDTO request) {
         log.info("Creating subscription for user: {} with plan: {}", request.getUserId(), request.getPlanId());
         
-        // System.out.println("DEBUG: Creating subscription for userId=" + request.getUserId() + " planId=" + request.getPlanId());
-        // used during testing - can be removed later
+        // Additional validation for API testing robustness
+        if (request.getUserId() == null || request.getUserId() <= 0) {
+            throw new MembershipException("Invalid user ID provided", "INVALID_USER_ID");
+        }
+        
+        if (request.getPlanId() == null || request.getPlanId() <= 0) {
+            throw new MembershipException("Invalid plan ID provided", "INVALID_PLAN_ID");
+        }
         
         User user = userService.findUserEntityById(request.getUserId());
         MembershipPlan plan = planRepository.findById(request.getPlanId())
             .orElseThrow(() -> new MembershipException("Plan not found", "PLAN_NOT_FOUND"));
+            
+        // Validate plan is active
+        if (!plan.getIsActive()) {
+            throw new MembershipException("Cannot subscribe to inactive plan", "INACTIVE_PLAN");
+        }
             
         // Check if user already has active subscription
         Optional<Subscription> existingSubscription = subscriptionRepository
@@ -279,18 +307,147 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     public SubscriptionDTO updateSubscription(Long subscriptionId, SubscriptionUpdateDTO updateDTO) {
-        log.info("Updating subscription: {}", subscriptionId);
+        log.info("Updating subscription: {} with update request: {}", subscriptionId, updateDTO);
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
             .orElseThrow(() -> new MembershipException("Subscription not found", "SUBSCRIPTION_NOT_FOUND"));
             
-        // Currently only supporting auto-renewal updates
+        boolean hasChanges = false;
+        
+        // Update auto-renewal setting
         if (updateDTO.getAutoRenewal() != null) {
             subscription.setAutoRenewal(updateDTO.getAutoRenewal());
+            hasChanges = true;
+            log.info("Updated auto-renewal for subscription {}: {}", subscriptionId, updateDTO.getAutoRenewal());
+        }
+        
+        // Handle plan changes (upgrade/downgrade)
+        if (updateDTO.getNewPlanId() != null) {
+            MembershipPlan newPlan = planRepository.findById(updateDTO.getNewPlanId())
+                .orElseThrow(() -> new MembershipException("Plan not found", "PLAN_NOT_FOUND"));
+                
+            if (!newPlan.getIsActive()) {
+                throw new MembershipException("Cannot subscribe to inactive plan", "INACTIVE_PLAN");
+            }
+            
+            MembershipPlan currentPlan = subscription.getPlan();
+            
+            // Validate the plan change is valid
+            if (!currentPlan.getId().equals(newPlan.getId())) {
+                // Calculate pro-rated adjustments for plan changes
+                subscription.setPlan(newPlan);
+                
+                // Update subscription end date based on new plan duration
+                LocalDateTime newEndDate = calculateNewEndDate(subscription.getStartDate(), newPlan.getDurationInMonths());
+                subscription.setEndDate(newEndDate);
+                subscription.setNextBillingDate(newEndDate);
+                
+                // Calculate pro-rated billing adjustment
+                BigDecimal proRatedAmount = calculateProRatedAmount(subscription, currentPlan, newPlan);
+                subscription.setPaidAmount(subscription.getPaidAmount().add(proRatedAmount));
+                
+                hasChanges = true;
+                log.info("Updated subscription {} from plan {} to plan {} with pro-rated adjustment: {}", 
+                    subscriptionId, currentPlan.getName(), newPlan.getName(), proRatedAmount);
+            }
+        }
+        
+        // Handle status changes
+        if (updateDTO.getStatus() != null && updateDTO.getStatus() != subscription.getStatus()) {
+            Subscription.SubscriptionStatus newStatus = updateDTO.getStatus();
+            
+            // Validate status transition
+            if (isValidStatusTransition(subscription.getStatus(), newStatus)) {
+                subscription.setStatus(newStatus);
+                
+                // Handle specific status change logic
+                if (newStatus == Subscription.SubscriptionStatus.CANCELLED) {
+                    subscription.setCancelledAt(LocalDateTime.now());
+                    subscription.setCancellationReason(
+                        updateDTO.getReason() != null ? updateDTO.getReason() : "Updated via API"
+                    );
+                    subscription.setAutoRenewal(false);
+                }
+                
+                hasChanges = true;
+                log.info("Updated subscription {} status to: {}", subscriptionId, newStatus);
+            } else {
+                throw new MembershipException(
+                    "Invalid status transition from " + subscription.getStatus() + " to " + newStatus, 
+                    "INVALID_STATUS_TRANSITION"
+                );
+            }
+        }
+        
+        if (!hasChanges) {
+            log.info("No changes detected for subscription update: {}", subscriptionId);
+            return convertSubscriptionToDTO(subscription);
         }
         
         Subscription updatedSubscription = subscriptionRepository.save(subscription);
+        log.info("Subscription updated successfully: {}", subscriptionId);
+        
         return convertSubscriptionToDTO(updatedSubscription);
+    }
+    
+    /**
+     * Helper method to calculate new end date based on plan duration
+     */
+    private LocalDateTime calculateNewEndDate(LocalDateTime startDate, Integer durationInMonths) {
+        return startDate.plusMonths(durationInMonths);
+    }
+    
+    /**
+     * Calculate pro-rated billing amount for plan changes
+     * 
+     * Calculates the difference between plans based on remaining time in current subscription.
+     * Positive amount = user owes money (upgrade), Negative = user gets credit (downgrade)
+     */
+    private BigDecimal calculateProRatedAmount(Subscription subscription, MembershipPlan currentPlan, MembershipPlan newPlan) {
+        LocalDateTime now = LocalDateTime.now();
+        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(subscription.getStartDate(), subscription.getEndDate());
+        long remainingDays = java.time.temporal.ChronoUnit.DAYS.between(now, subscription.getEndDate());
+        
+        if (remainingDays <= 0) {
+            // If subscription expired, charge full new plan price
+            return newPlan.getPrice();
+        }
+        
+        // Calculate unused portion of current plan
+        BigDecimal unusedCurrentPlanValue = currentPlan.getPrice()
+            .multiply(new BigDecimal(remainingDays))
+            .divide(new BigDecimal(totalDays), 2, java.math.RoundingMode.HALF_UP);
+            
+        // Calculate proportional cost for remaining time on new plan
+        BigDecimal newPlanProportionalCost = newPlan.getPrice()
+            .multiply(new BigDecimal(remainingDays))
+            .divide(new BigDecimal(totalDays), 2, java.math.RoundingMode.HALF_UP);
+            
+        // Return the difference (positive = user pays more, negative = user gets credit)
+        BigDecimal proRatedDifference = newPlanProportionalCost.subtract(unusedCurrentPlanValue);
+        
+        log.debug("Pro-rated calculation: Current plan unused value: {}, New plan proportional cost: {}, Difference: {}", 
+            unusedCurrentPlanValue, newPlanProportionalCost, proRatedDifference);
+            
+        return proRatedDifference;
+    }
+    
+    /**
+     * Validate if status transition is allowed
+     */
+    private boolean isValidStatusTransition(Subscription.SubscriptionStatus from, Subscription.SubscriptionStatus to) {
+        // Define valid transitions
+        return switch (from) {
+            case ACTIVE -> to == Subscription.SubscriptionStatus.CANCELLED || 
+                          to == Subscription.SubscriptionStatus.SUSPENDED ||
+                          to == Subscription.SubscriptionStatus.EXPIRED;
+            case PENDING -> to == Subscription.SubscriptionStatus.ACTIVE || 
+                           to == Subscription.SubscriptionStatus.CANCELLED;
+            case SUSPENDED -> to == Subscription.SubscriptionStatus.ACTIVE || 
+                             to == Subscription.SubscriptionStatus.CANCELLED;
+            case EXPIRED -> to == Subscription.SubscriptionStatus.ACTIVE; // Allow reactivation
+            case CANCELLED -> false; // Cannot transition from cancelled
+        };
     }
     
     @Override
@@ -298,7 +455,7 @@ public class MembershipServiceImpl implements MembershipService {
         log.info("Cancelling subscription: {} with reason: {}", subscriptionId, reason);
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
-            .orElseThrow(() -> new MembershipException("Subscription not found", "SUBSCRIPTION_NOT_FOUND"));
+            .orElseThrow(() -> MembershipException.subscriptionNotFound(subscriptionId));
             
         if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
             throw new MembershipException("Cannot cancel non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
@@ -308,9 +465,10 @@ public class MembershipServiceImpl implements MembershipService {
         subscription.setCancelledAt(LocalDateTime.now());
         subscription.setCancellationReason(reason);
         subscription.setAutoRenewal(false);
+        subscription.setUpdatedAt(LocalDateTime.now());
         
         Subscription cancelledSubscription = subscriptionRepository.save(subscription);
-        log.info("Subscription cancelled successfully: {}", subscriptionId);
+        log.info("Subscription cancelled successfully: {} with reason: {}", subscriptionId, reason);
         
         return convertSubscriptionToDTO(cancelledSubscription);
     }
@@ -370,19 +528,34 @@ public class MembershipServiceImpl implements MembershipService {
         log.info("Upgrading subscription: {} to plan: {}", subscriptionId, newPlanId);
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
-            .orElseThrow(() -> new MembershipException("Subscription not found", "SUBSCRIPTION_NOT_FOUND"));
+            .orElseThrow(() -> MembershipException.subscriptionNotFound(subscriptionId));
+            
+        if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
+            throw new MembershipException("Cannot upgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
+        }
             
         MembershipPlan newPlan = planRepository.findById(newPlanId)
-            .orElseThrow(() -> new MembershipException("Plan not found", "PLAN_NOT_FOUND"));
-            
-        if (newPlan.getTier().getLevel() <= subscription.getPlan().getTier().getLevel()) {
-            throw new MembershipException("New plan must be of higher tier", "INVALID_UPGRADE");
+            .orElseThrow(() -> MembershipException.planNotFound(newPlanId));
+        
+        MembershipPlan currentPlan = subscription.getPlan();
+        
+        // Allow upgrades within same tier (monthly to yearly) or to higher tier
+        boolean isValidUpgrade = newPlan.getTier().getLevel() > currentPlan.getTier().getLevel() ||
+                               (newPlan.getTier().getLevel().equals(currentPlan.getTier().getLevel()) && 
+                                newPlan.getDurationInMonths() > currentPlan.getDurationInMonths());
+        
+        if (!isValidUpgrade) {
+            throw new MembershipException("Invalid upgrade: new plan must be higher tier or longer duration", "INVALID_UPGRADE");
         }
         
+        // Calculate pro-rated amount for upgrade
+        BigDecimal priceDifference = newPlan.getPrice().subtract(currentPlan.getPrice());
         subscription.setPlan(newPlan);
+        subscription.setPaidAmount(subscription.getPaidAmount().add(priceDifference));
+        subscription.setUpdatedAt(LocalDateTime.now());
         
         Subscription upgradedSubscription = subscriptionRepository.save(subscription);
-        log.info("Subscription upgraded successfully: {}", subscriptionId);
+        log.info("Subscription upgraded successfully: {} to plan: {}", subscriptionId, newPlan.getName());
         
         return convertSubscriptionToDTO(upgradedSubscription);
     }
@@ -499,10 +672,25 @@ public class MembershipServiceImpl implements MembershipService {
     /**
      * Convert Subscription entity to DTO with all details
      * 
-     * NOTE: This method might fail on edge cases like deleted users
-     * Added defensive checks but could be improved
+     * Enhanced with null safety for robust API testing
      */
     private SubscriptionDTO convertSubscriptionToDTO(Subscription subscription) {
+        if (subscription == null) {
+            throw new MembershipException("Subscription cannot be null", "NULL_SUBSCRIPTION");
+        }
+        
+        if (subscription.getUser() == null) {
+            throw new MembershipException("Subscription must have a user", "NULL_USER");
+        }
+        
+        if (subscription.getPlan() == null) {
+            throw new MembershipException("Subscription must have a plan", "NULL_PLAN");
+        }
+        
+        if (subscription.getPlan().getTier() == null) {
+            throw new MembershipException("Plan must have a tier", "NULL_TIER");
+        }
+        
         return SubscriptionDTO.builder()
             .id(subscription.getId())
             .userId(subscription.getUser().getId())

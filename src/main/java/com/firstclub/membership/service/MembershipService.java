@@ -24,12 +24,14 @@ public interface MembershipService {
     List<MembershipPlanDTO> getAllPlans();
     List<MembershipPlanDTO> getActivePlans();
     List<MembershipPlanDTO> getPlansByTier(String tierName);
+    List<MembershipPlanDTO> getPlansByTierId(Long tierId);
     List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type);
     Optional<MembershipPlanDTO> getPlanById(Long id);
 
     // Tier operations
     List<MembershipTier> getAllTiers();
     Optional<MembershipTier> getTierByName(String name);
+    Optional<MembershipTier> getTierById(Long id);
 
     // Subscription operations
     SubscriptionDTO createSubscription(SubscriptionRequestDTO request);

@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -65,6 +66,7 @@ public class MembershipTier {
 
     // Each tier can have multiple plans (monthly, quarterly, yearly)
     @OneToMany(mappedBy = "tier", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonIgnore  // Prevents Jackson serialization issues in REST endpoints
     private List<MembershipPlan> plans;
 
     /**

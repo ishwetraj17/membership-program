@@ -31,16 +31,16 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(MembershipException.class)
     public ResponseEntity<ErrorResponse> handleMembershipException(MembershipException e) {
-        log.error("Membership error: {}", e.getMessage());
+        log.error("Membership error [{}]: {}", e.getErrorCode(), e.getMessage());
         
         ErrorResponse error = ErrorResponse.builder()
             .message(e.getMessage())
             .errorCode(e.getErrorCode())
             .timestamp(LocalDateTime.now())
+            .httpStatus(e.getHttpStatus().value())
             .build();
             
-        // TODO: Map error codes to appropriate HTTP status codes
-        return ResponseEntity.badRequest().body(error);
+        return ResponseEntity.status(e.getHttpStatus()).body(error);
     }
 
     /**
@@ -61,6 +61,7 @@ public class GlobalExceptionHandler {
             .message("Validation failed")
             .errorCode("VALIDATION_ERROR")
             .timestamp(LocalDateTime.now())
+            .httpStatus(HttpStatus.BAD_REQUEST.value())
             .validationErrors(validationErrors)
             .build();
             
@@ -78,13 +79,14 @@ public class GlobalExceptionHandler {
             .message("An unexpected error occurred")
             .errorCode("INTERNAL_ERROR")
             .timestamp(LocalDateTime.now())
+            .httpStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
             .build();
             
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
 
     /**
-     * Standard error response format
+     * Enhanced error response format with HTTP status information
      */
     @Data
     @Builder
@@ -92,6 +94,7 @@ public class GlobalExceptionHandler {
         private String message;
         private String errorCode;
         private LocalDateTime timestamp;
+        private Integer httpStatus;
         private Map<String, String> validationErrors;
     }
 }
