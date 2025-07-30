@@ -287,8 +287,11 @@ src/main/java/com/firstclub/membership/
 ├── MembershipApplication.java          # Spring Boot entry point with custom branding
 ├── config/
 │   └── DatabaseConfig.java            # H2 configuration with production switches
+    └── SwaggerConfig.java
 ├── controller/                         # REST API endpoints (15+ endpoints)
 │   ├── MembershipController.java      # Core business operations
+    ├── PlanController.java
+    ├── SubscriptionController.java
 │   └── UserController.java           # User management operations
 ├── dto/                               # Data Transfer Objects with validation
 │   ├── UserDTO.java                  # User data with Indian validation
@@ -613,17 +616,17 @@ python3 master_api_tests.py
 
 **Test Results:** 28/29 tests passing (96.6% success rate)
 
-See [TESTING_README.md](TESTING_README.md) for detailed testing documentation.
-
 -----
 
 ## 🎉 **Getting Started Today**
 
 1. **Clone the repository**
-1. **Run `mvn spring-boot:run`**
-1. **Open http://localhost:8080/swagger-ui.html**
-1. **Run automated tests: `python3 master_api_tests.py`**
-1. **Start testing the APIs immediately**
+2. **Run `mvn spring-boot:run`**
+3. **Open http://localhost:8080/swagger-ui.html**
+4. **Run automated tests: `python3 master_api_tests.py`**
+5. **Run stress tests: `python3 stress_test.py`**
+6. **Run extensive stress tests: `python3 user_stress_test.py`**
+7. **Start testing the APIs immediately**
 
 **Experience the power of a production-ready membership system built with modern Java technologies and optimized for the Indian market! 🚀**
 
