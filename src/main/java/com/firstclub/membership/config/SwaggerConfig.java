@@ -57,7 +57,7 @@ public class SwaggerConfig {
                 .contact(new Contact()
                     .name("Shwet Raj")
                     .email("ishwetraj2@gmail.com")
-                    .url("https://github.com/shwetraj17"))
+                    .url("https://github.com/ishwetraj17/membership-program"))
                 .license(new License()
                     .name("MIT License")
                     .url("https://opensource.org/licenses/MIT")))
