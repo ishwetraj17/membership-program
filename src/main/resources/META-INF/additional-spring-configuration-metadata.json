@@ -1,0 +1,55 @@
+{
+  "properties": [
+    {
+      "name": "app.version",
+      "type": "java.lang.String",
+      "description": "Application version displayed in API responses and health endpoint."
+    },
+    {
+      "name": "app.jwt.secret",
+      "type": "java.lang.String",
+      "description": "Base64-encoded HMAC-SHA256 secret used to sign JWT tokens. Must be at least 256 bits in production."
+    },
+    {
+      "name": "app.jwt.expiration-ms",
+      "type": "java.lang.Long",
+      "description": "JWT token validity duration in milliseconds. Default: 86400000 (24 hours).",
+      "defaultValue": 86400000
+    },
+    {
+      "name": "app.cors.allowed-origins",
+      "type": "java.lang.String",
+      "description": "Comma-separated list of origins permitted by CORS policy."
+    },
+    {
+      "name": "membership.pricing.silver",
+      "type": "java.math.BigDecimal",
+      "description": "Monthly price (INR) for the Silver membership tier.",
+      "defaultValue": 299
+    },
+    {
+      "name": "membership.pricing.gold",
+      "type": "java.math.BigDecimal",
+      "description": "Monthly price (INR) for the Gold membership tier.",
+      "defaultValue": 499
+    },
+    {
+      "name": "membership.pricing.platinum",
+      "type": "java.math.BigDecimal",
+      "description": "Monthly price (INR) for the Platinum membership tier.",
+      "defaultValue": 799
+    },
+    {
+      "name": "membership.scheduler.expire-subscriptions",
+      "type": "java.lang.String",
+      "description": "Cron expression for the daily job that marks expired subscriptions. Default: 1 AM every day.",
+      "defaultValue": "0 0 1 * * *"
+    },
+    {
+      "name": "membership.scheduler.process-renewals",
+      "type": "java.lang.String",
+      "description": "Cron expression for the daily auto-renewal processing job. Default: 1:05 AM every day.",
+      "defaultValue": "0 5 1 * * *"
+    }
+  ]
+}

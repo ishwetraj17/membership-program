@@ -1,7 +1,6 @@
 package com.firstclub.membership.service;
 
 import com.firstclub.membership.dto.UserDTO;
-import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.entity.User;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.mapper.UserMapper;
