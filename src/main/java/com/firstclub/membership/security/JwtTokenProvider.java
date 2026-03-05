@@ -17,8 +17,12 @@ import java.util.stream.Collectors;
 /**
  * Stateless JWT token provider.
  *
- * Generates and validates JWT tokens using HMAC-SHA256.
+ * Generates and validates JWT access tokens and refresh tokens using HMAC-SHA256.
  * The secret must be at least 256 bits (32 bytes) for HS256.
+ *
+ * Access tokens: short-lived (app.jwt.expiration-ms, default 24 h).
+ * Refresh tokens: longer-lived (app.jwt.refresh-expiration-ms, default 7 d),
+ *                 identified by claim {@code type=refresh}.
  */
 @Component
 @Slf4j
@@ -29,6 +33,9 @@ public class JwtTokenProvider {
 
     @Value("${app.jwt.expiration-ms:86400000}")
     private long jwtExpirationMs;
+
+    @Value("${app.jwt.refresh-expiration-ms:604800000}")
+    private long refreshExpirationMs;
 
     private SecretKey signingKey() {
         byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
@@ -44,8 +51,19 @@ public class JwtTokenProvider {
         return Jwts.builder()
             .subject(username)
             .claim("roles", roles)
+            .claim("type", "access")
             .issuedAt(new Date())
             .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
+            .signWith(signingKey())
+            .compact();
+    }
+
+    public String generateRefreshToken(Authentication authentication) {
+        return Jwts.builder()
+            .subject(authentication.getName())
+            .claim("type", "refresh")
+            .issuedAt(new Date())
+            .expiration(new Date(System.currentTimeMillis() + refreshExpirationMs))
             .signWith(signingKey())
             .compact();
     }
@@ -57,6 +75,28 @@ public class JwtTokenProvider {
             .parseSignedClaims(token)
             .getPayload()
             .getSubject();
+    }
+
+    public Date getExpirationFromToken(String token) {
+        return Jwts.parser()
+            .verifyWith(signingKey())
+            .build()
+            .parseSignedClaims(token)
+            .getPayload()
+            .getExpiration();
+    }
+
+    public boolean isRefreshToken(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                .verifyWith(signingKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+            return "refresh".equals(claims.get("type", String.class));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public boolean validateToken(String token) {

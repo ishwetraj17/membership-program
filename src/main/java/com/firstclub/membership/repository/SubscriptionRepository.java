@@ -5,6 +5,7 @@ import com.firstclub.membership.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -111,4 +112,15 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
      */
     @Query("SELECT COUNT(DISTINCT s.user.id) FROM Subscription s WHERE s.status = 'ACTIVE'")
     long countDistinctActiveUsers();
+
+    /**
+     * Bulk-expire all ACTIVE subscriptions whose end date has passed.
+     * Single UPDATE statement — eliminates the N+1 loop in processExpiredSubscriptions().
+     *
+     * @param now current timestamp
+     * @return number of subscriptions marked EXPIRED
+     */
+    @Modifying
+    @Query("UPDATE Subscription s SET s.status = 'EXPIRED' WHERE s.status = 'ACTIVE' AND s.endDate < :now")
+    int bulkExpireSubscriptions(@Param("now") LocalDateTime now);
 }

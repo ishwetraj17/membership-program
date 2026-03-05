@@ -3,6 +3,8 @@ package com.firstclub.membership.controller;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.PlanService;
+import com.firstclub.membership.service.TierService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -12,6 +14,7 @@ import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,13 +38,15 @@ import java.util.List;
 public class MembershipController {
     
     private final MembershipService membershipService;
+    private final TierService tierService;
+    private final PlanService planService;
     
     // Plan endpoints
     @GetMapping("/plans")
     @Operation(summary = "Get all membership plans", description = "Retrieves all available plans with pricing in INR")
     @ApiResponse(responseCode = "200", description = "Plans retrieved successfully")
     public ResponseEntity<List<MembershipPlanDTO>> getAllPlans() {
-        List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+        List<MembershipPlanDTO> plans = planService.getActivePlans();
         log.debug("Retrieved {} membership plans", plans.size());
         return ResponseEntity.ok(plans);
     }
@@ -54,7 +59,7 @@ public class MembershipController {
     })
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTier(
             @Parameter(description = "Tier name", example = "GOLD") @PathVariable String tierName) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByTier(tierName);
+        List<MembershipPlanDTO> plans = planService.getPlansByTier(tierName);
         log.debug("Retrieved {} plans for tier: {}", plans.size(), tierName);
         return ResponseEntity.ok(plans);
     }
@@ -67,7 +72,7 @@ public class MembershipController {
     })
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTierId(
             @Parameter(description = "Tier ID", example = "1") @Positive @PathVariable Long tierId) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByTierId(tierId);
+        List<MembershipPlanDTO> plans = planService.getPlansByTierId(tierId);
         log.debug("Retrieved {} plans for tier ID: {}", plans.size(), tierId);
         return ResponseEntity.ok(plans);
     }
@@ -76,7 +81,7 @@ public class MembershipController {
     @Operation(summary = "Get plans by type", description = "Get plans by duration type")
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByType(
             @Parameter(description = "Plan type", example = "YEARLY") @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByType(type);
+        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
         log.debug("Retrieved {} plans for type: {}", plans.size(), type);
         return ResponseEntity.ok(plans);
     }
@@ -89,7 +94,7 @@ public class MembershipController {
     })
     public ResponseEntity<MembershipPlanDTO> getPlanById(
             @Parameter(description = "Plan ID", example = "1") @Positive @PathVariable Long id) {
-        return membershipService.getPlanById(id)
+        return planService.getPlanById(id)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
@@ -99,7 +104,7 @@ public class MembershipController {
     @Operation(summary = "Get all membership tiers", description = "Get all available tiers with benefits")
     @ApiResponse(responseCode = "200", description = "Tiers retrieved successfully")
     public ResponseEntity<List<MembershipTierDTO>> getAllTiers() {
-        List<MembershipTierDTO> tiers = membershipService.getAllTiers();
+        List<MembershipTierDTO> tiers = tierService.getAllTiers();
         log.debug("Retrieved {} membership tiers", tiers.size());
         return ResponseEntity.ok(tiers);
     }
@@ -112,7 +117,7 @@ public class MembershipController {
     })
     public ResponseEntity<MembershipTierDTO> getTierByName(
             @Parameter(description = "Tier name", example = "PLATINUM") @PathVariable String name) {
-        return membershipService.getTierByName(name)
+        return tierService.getTierByName(name)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
@@ -125,13 +130,14 @@ public class MembershipController {
     })
     public ResponseEntity<MembershipTierDTO> getTierById(
             @Parameter(description = "Tier ID", example = "1") @Positive @PathVariable Long id) {
-        return membershipService.getTierById(id)
+        return tierService.getTierById(id)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
     
     // Health and Analytics endpoints
     @GetMapping("/health")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(
         summary = "System health check and metrics", 
         description = """
@@ -163,6 +169,7 @@ public class MembershipController {
     }
     
     @GetMapping("/analytics")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(
         summary = "Business analytics and insights", 
         description = """

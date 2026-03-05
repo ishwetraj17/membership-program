@@ -60,7 +60,12 @@ public class UserDTO {
     /**
      * Password is accepted on create/update but NEVER serialized in responses.
      * WRITE_ONLY ensures it is deserialized from requests but excluded from all JSON output.
+     * Must be 8+ characters with at least one uppercase, lowercase, digit, and special character.
      */
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @Pattern(
+        regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
+        message = "Password must be at least 8 characters and contain uppercase, lowercase, digit, and special character (@$!%*?&)"
+    )
     private String password;
 }

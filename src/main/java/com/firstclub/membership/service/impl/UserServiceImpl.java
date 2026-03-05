@@ -63,6 +63,22 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public UserDTO createAdminUser(UserDTO userDTO) {
+        if (userRepository.existsByEmailAndIsDeletedFalse(userDTO.getEmail())) {
+            return getUserByEmail(userDTO.getEmail()).orElseThrow();
+        }
+        User user = userMapper.toEntity(userDTO);
+        user.setStatus(User.UserStatus.ACTIVE);
+        user.setIsDeleted(false);
+        user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
+        String rawPassword = userDTO.getPassword() != null ? userDTO.getPassword() : "ChangeMe@1234";
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        User saved = userRepository.save(user);
+        log.info("Admin user created with ID: {}", saved.getId());
+        return userMapper.toDTO(saved);
+    }
+
+    @Override
     public UserDTO updateUser(Long id, UserDTO userDTO) {
         log.info("Updating user with ID: {}", id);
         

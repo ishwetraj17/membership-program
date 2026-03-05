@@ -27,6 +27,12 @@ public interface UserService {
     UserDTO createUser(UserDTO userDTO);
 
     /**
+     * Create a new admin user account (ROLE_ADMIN).
+     * Used only during application initialization.
+     */
+    UserDTO createAdminUser(UserDTO userDTO);
+
+    /**
      * Update existing user information
      * 
      * @param id user ID

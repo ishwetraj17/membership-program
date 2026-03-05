@@ -19,6 +19,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -57,6 +58,7 @@ public class UserController {
     }
     
     @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#id, authentication)")
     @Operation(summary = "Get user by ID", description = "Retrieves user information by ID")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "User found successfully"),
@@ -70,6 +72,7 @@ public class UserController {
     }
     
     @GetMapping("/email/{email}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Get user by email", description = "Finds user by email address")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "User found successfully"),
@@ -83,6 +86,7 @@ public class UserController {
     }
     
     @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Get all users", description = "Retrieves registered users with optional pagination")
     @ApiResponse(responseCode = "200", description = "Users retrieved successfully")
     public ResponseEntity<Page<UserDTO>> getAllUsers(
@@ -98,6 +102,7 @@ public class UserController {
     }
     
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#id, authentication)")
     @Operation(summary = "Update user", description = "Updates user information")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "User updated successfully"),
@@ -113,6 +118,7 @@ public class UserController {
     }
     
     @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#id, authentication)")
     @Operation(summary = "Partially update user", description = "Updates specific user fields")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "User updated successfully"),
@@ -162,6 +168,7 @@ public class UserController {
     }
     
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Delete user", description = "Deletes a user account")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "204", description = "User deleted successfully"),
@@ -177,6 +184,7 @@ public class UserController {
     // ==== SUBSCRIPTION MANAGEMENT ENDPOINTS FOR USERS ====
     
     @GetMapping("/{userId}/subscription")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Get user's active subscription", 
         description = "Get the current active subscription for a specific user. Returns 404 if no active subscription exists."
@@ -205,6 +213,7 @@ public class UserController {
     }
     
     @GetMapping("/{userId}/subscriptions")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Get all user subscriptions", 
         description = "Get complete subscription history for a specific user including active, expired, and cancelled subscriptions."
@@ -224,6 +233,7 @@ public class UserController {
     }
     
     @PostMapping("/{userId}/subscriptions")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Create subscription for user", 
         description = "Create a new subscription for the specified user. Only one active subscription allowed per user."
@@ -252,6 +262,7 @@ public class UserController {
     }
     
     @PutMapping("/{userId}/subscriptions/{subscriptionId}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Update user's subscription", 
         description = "Update subscription settings like auto-renewal, plan changes, or status changes."
@@ -289,6 +300,7 @@ public class UserController {
     }
     
     @PutMapping("/{userId}/subscriptions/{subscriptionId}/upgrade/{newPlanId}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Upgrade user's subscription", 
         description = "Upgrade an active subscription to a higher tier plan or longer duration."
@@ -326,6 +338,7 @@ public class UserController {
     }
 
     @PostMapping("/{userId}/subscriptions/{subscriptionId}/cancel")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#userId, authentication)")
     @Operation(
         summary = "Cancel user's subscription", 
         description = "Cancel an active subscription for the specified user."

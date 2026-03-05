@@ -9,6 +9,7 @@ import com.firstclub.membership.mapper.MembershipTierMapper;
 import com.firstclub.membership.mapper.SubscriptionMapper;
 import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.MembershipTierRepository;
+import com.firstclub.membership.repository.SubscriptionHistoryRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
 import com.firstclub.membership.service.impl.MembershipServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,9 @@ class MembershipServiceImplTest {
 
     @Mock
     private SubscriptionRepository subscriptionRepository;
+
+    @Mock
+    private SubscriptionHistoryRepository subscriptionHistoryRepository;
 
     @Mock
     private UserService userService;
@@ -325,6 +329,128 @@ class MembershipServiceImplTest {
             assertThatThrownBy(() -> membershipService.getSubscriptionById(999L))
                     .isInstanceOf(MembershipException.class)
                     .hasMessageContaining("Subscription not found");
+        }
+    }
+
+    @Nested
+    @DisplayName("upgradeSubscription()")
+    class UpgradeSubscriptionTests {
+
+        private MembershipTier goldTier;
+        private MembershipPlan silverYearly;
+        private MembershipPlan goldMonthly;
+
+        @BeforeEach
+        void setUpUpgradeFixtures() {
+            goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2)
+                    .discountPercentage(new BigDecimal("10")).build();
+
+            silverYearly = MembershipPlan.builder()
+                    .id(4L).name("Silver Yearly").type(MembershipPlan.PlanType.YEARLY)
+                    .price(new BigDecimal("3048")).durationInMonths(12)
+                    .tier(silverTier).isActive(true).build();
+
+            goldMonthly = MembershipPlan.builder()
+                    .id(2L).name("Gold Monthly").type(MembershipPlan.PlanType.MONTHLY)
+                    .price(new BigDecimal("499")).durationInMonths(1)
+                    .tier(goldTier).isActive(true).build();
+        }
+
+        @Test
+        @DisplayName("Should upgrade from Silver to Gold tier")
+        void shouldUpgradeToHigherTier() {
+            when(subscriptionRepository.findById(10L)).thenReturn(Optional.of(activeSubscription));
+            when(planRepository.findById(2L)).thenReturn(Optional.of(goldMonthly));
+            when(subscriptionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            SubscriptionDTO expected = SubscriptionDTO.builder().id(10L)
+                    .status(Subscription.SubscriptionStatus.ACTIVE).build();
+            when(subscriptionMapper.toDTO(any())).thenReturn(expected);
+
+            SubscriptionDTO result = membershipService.upgradeSubscription(10L, 2L);
+
+            assertThat(result.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            verify(subscriptionHistoryRepository).save(any());
+        }
+
+        @Test
+        @DisplayName("Should throw when upgrading to same plan (no change)")
+        void shouldThrowWhenUpgradingToSamePlan() {
+            when(subscriptionRepository.findById(10L)).thenReturn(Optional.of(activeSubscription));
+            // Same plan: same tier level (1) and same duration (1 month)
+            when(planRepository.findById(1L)).thenReturn(Optional.of(silverMonthly));
+
+            assertThatThrownBy(() -> membershipService.upgradeSubscription(10L, 1L))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("Invalid upgrade");
+        }
+
+        @Test
+        @DisplayName("Should throw when upgrading a non-active subscription")
+        void shouldThrowWhenUpgradingNonActiveSubscription() {
+            activeSubscription.setStatus(Subscription.SubscriptionStatus.CANCELLED);
+            when(subscriptionRepository.findById(10L)).thenReturn(Optional.of(activeSubscription));
+
+            assertThatThrownBy(() -> membershipService.upgradeSubscription(10L, 2L))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("Cannot upgrade non-active");
+        }
+    }
+
+    @Nested
+    @DisplayName("downgradeSubscription()")
+    class DowngradeSubscriptionTests {
+
+        private MembershipPlan silverYearly;
+
+        @BeforeEach
+        void setUpDowngradeFixtures() {
+            // Subscription is on Silver Yearly (12 months)
+            silverYearly = MembershipPlan.builder()
+                    .id(3L).name("Silver Yearly").type(MembershipPlan.PlanType.YEARLY)
+                    .price(new BigDecimal("3048")).durationInMonths(12)
+                    .tier(silverTier).isActive(true).build();
+
+            activeSubscription = Subscription.builder()
+                    .id(10L).user(testUser).plan(silverYearly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusDays(5))
+                    .endDate(LocalDateTime.now().plusDays(360))
+                    .paidAmount(new BigDecimal("3048")).autoRenewal(true).build();
+        }
+
+        @Test
+        @DisplayName("Should allow same-tier shorter-duration downgrade (yearly → monthly)")
+        void shouldAllowSameTierDowngradeYearlyToMonthly() {
+            when(subscriptionRepository.findById(10L)).thenReturn(Optional.of(activeSubscription));
+            when(planRepository.findById(1L)).thenReturn(Optional.of(silverMonthly)); // same tier, 1 month
+            when(subscriptionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            SubscriptionDTO expected = SubscriptionDTO.builder().id(10L)
+                    .status(Subscription.SubscriptionStatus.ACTIVE).build();
+            when(subscriptionMapper.toDTO(any())).thenReturn(expected);
+
+            SubscriptionDTO result = membershipService.downgradeSubscription(10L, 1L);
+
+            assertThat(result.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            verify(subscriptionHistoryRepository).save(any());
+        }
+
+        @Test
+        @DisplayName("Should throw when attempting to downgrade to a higher-tier plan")
+        void shouldThrowWhenDowngradingToHigherTier() {
+            MembershipTier goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2).build();
+            MembershipPlan goldMonthly = MembershipPlan.builder()
+                    .id(2L).type(MembershipPlan.PlanType.MONTHLY)
+                    .price(new BigDecimal("499")).durationInMonths(1)
+                    .tier(goldTier).isActive(true).build();
+
+            when(subscriptionRepository.findById(10L)).thenReturn(Optional.of(activeSubscription));
+            when(planRepository.findById(2L)).thenReturn(Optional.of(goldMonthly));
+
+            assertThatThrownBy(() -> membershipService.downgradeSubscription(10L, 2L))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("Invalid downgrade");
         }
     }
 }

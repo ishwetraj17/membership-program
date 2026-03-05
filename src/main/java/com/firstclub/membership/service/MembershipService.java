@@ -1,7 +1,6 @@
 package com.firstclub.membership.service;
 
 import com.firstclub.membership.dto.*;
-import com.firstclub.membership.entity.MembershipPlan;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -9,10 +8,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Service interface for membership and subscription operations
+ * Service interface for membership subscription operations and system analytics.
  *
- * Core business logic for membership management.
- * Handles plans, tiers, and subscription lifecycle.
+ * Plan and tier catalogue operations have been delegated to PlanService and TierService.
  *
  * Implemented by Shwet Raj
  */
@@ -20,19 +18,6 @@ public interface MembershipService {
 
     // Initialization
     void initializeDefaultData();
-
-    // Plan operations
-    List<MembershipPlanDTO> getAllPlans();
-    List<MembershipPlanDTO> getActivePlans();
-    List<MembershipPlanDTO> getPlansByTier(String tierName);
-    List<MembershipPlanDTO> getPlansByTierId(Long tierId);
-    List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type);
-    Optional<MembershipPlanDTO> getPlanById(Long id);
-
-    // Tier operations — return DTOs, not entities
-    List<MembershipTierDTO> getAllTiers();
-    Optional<MembershipTierDTO> getTierByName(String name);
-    Optional<MembershipTierDTO> getTierById(Long id);
 
     // Subscription operations
     SubscriptionDTO createSubscription(SubscriptionRequestDTO request);
@@ -42,7 +27,6 @@ public interface MembershipService {
     SubscriptionDTO getSubscriptionById(Long subscriptionId);
     Optional<SubscriptionDTO> getActiveSubscription(Long userId);
     List<SubscriptionDTO> getUserSubscriptions(Long userId);
-    List<SubscriptionDTO> getAllSubscriptions();
     Page<SubscriptionDTO> getAllSubscriptionsPaged(Pageable pageable);
 
     // Subscription lifecycle

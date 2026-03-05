@@ -1,5 +1,6 @@
 package com.firstclub.membership.security;
 
+import com.firstclub.membership.service.TokenBlacklistService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,6 +23,7 @@ import java.io.IOException;
  * JWT authentication filter executed once per request.
  *
  * Extracts the Bearer token from the Authorization header,
+ * checks it against the token blacklist (for logged-out tokens),
  * validates it, and sets the authentication in the SecurityContext.
  */
 @Component
@@ -31,6 +33,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserDetailsService userDetailsService;
+    private final TokenBlacklistService tokenBlacklistService;
 
     @Override
     protected void doFilterInternal(
@@ -40,7 +43,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String token = extractToken(request);
 
-        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
+        if (StringUtils.hasText(token)
+                && !tokenBlacklistService.isBlacklisted(token)
+                && jwtTokenProvider.validateToken(token)) {
+
             String username = jwtTokenProvider.getUsernameFromToken(token);
             UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 

@@ -3,8 +3,9 @@ package com.firstclub.membership;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.Subscription;
-import com.firstclub.membership.exception.MembershipException;
-import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.exception.MembershipException;import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.PlanService;
+import com.firstclub.membership.service.TierService;
 import com.firstclub.membership.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -48,6 +49,12 @@ class MembershipApplicationTests {
     private MembershipService membershipService;
     
     @Autowired
+    private TierService tierService;
+
+    @Autowired
+    private PlanService planService;
+
+    @Autowired
     private UserService userService;
 
     @Autowired
@@ -89,12 +96,14 @@ class MembershipApplicationTests {
         void contextLoads() {
             assertThat(membershipService).isNotNull();
             assertThat(userService).isNotNull();
+            assertThat(tierService).isNotNull();
+            assertThat(planService).isNotNull();
         }
 
         @Test
         @DisplayName("Should initialize 3 membership tiers correctly")
         void shouldInitializeMembershipTiers() {
-            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = membershipService.getAllTiers();
+            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = tierService.getAllTiers();
             
             assertThat(tiers).hasSize(3);
             assertThat(tiers)
@@ -105,7 +114,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should initialize 9 membership plans (3 tiers × 3 durations)")
         void shouldInitializeMembershipPlans() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             
             assertThat(plans).hasSize(9);
             
@@ -130,7 +139,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Tier pricing should follow hierarchy (Silver < Gold < Platinum)")
         void shouldValidateTierPricingHierarchy() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             
             MembershipPlanDTO silverPlan = plans.stream()
                 .filter(p -> p.getTier().equals("SILVER") && p.getType() == MembershipPlan.PlanType.MONTHLY)
@@ -158,7 +167,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Yearly plans should provide savings compared to monthly")
         void shouldValidateYearlyPlanSavings() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             
             MembershipPlanDTO silverMonthly = plans.stream()
                 .filter(p -> p.getTier().equals("SILVER") && p.getType() == MembershipPlan.PlanType.MONTHLY)
@@ -182,7 +191,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Tier levels should be consistent (Silver=1, Gold=2, Platinum=3)")
         void shouldValidateTierLevels() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             
             List<MembershipPlanDTO> silverPlans = plans.stream().filter(p -> p.getTier().equals("SILVER")).toList();
             List<MembershipPlanDTO> goldPlans = plans.stream().filter(p -> p.getTier().equals("GOLD")).toList();
@@ -196,7 +205,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Tier discount percentages should be correct")
         void shouldValidateTierDiscountPercentages() {
-            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = membershipService.getAllTiers();
+            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = tierService.getAllTiers();
             
             com.firstclub.membership.dto.MembershipTierDTO silverTier = tiers.stream()
                 .filter(t -> t.getName().equals("SILVER")).findFirst().orElseThrow();
@@ -262,7 +271,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("Sub Test User", "subtest");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO silverPlan = plans.stream()
                 .filter(p -> p.getTier().equals("SILVER") && p.getType() == MembershipPlan.PlanType.MONTHLY)
                 .findFirst()
@@ -291,7 +300,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("Duplicate Test", "duplicate");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO plan = plans.get(0);
 
             SubscriptionRequestDTO request = SubscriptionRequestDTO.builder()
@@ -313,7 +322,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("Cancel Test", "cancel");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO plan = plans.get(0);
 
             SubscriptionRequestDTO request = SubscriptionRequestDTO.builder()
@@ -342,7 +351,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("History Test", "history");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO plan = plans.get(0);
 
             SubscriptionRequestDTO request = SubscriptionRequestDTO.builder()
@@ -367,7 +376,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("Active Test", "active");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO goldPlan = plans.stream()
                 .filter(p -> p.getTier().equals("GOLD") && p.getType() == MembershipPlan.PlanType.MONTHLY)
                 .findFirst()
@@ -443,7 +452,7 @@ class MembershipApplicationTests {
             UserDTO user = createTestUser("Invalid Op Test", "invalidop");
             UserDTO createdUser = userService.createUser(user);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO plan = plans.get(0);
 
             SubscriptionRequestDTO request = SubscriptionRequestDTO.builder()
@@ -472,7 +481,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should validate plan data integrity")
         void shouldValidatePlanDataIntegrity() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             
             assertThat(plans).allMatch(plan -> {
                 return plan.getId() != null &&
@@ -487,9 +496,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should filter plans by type correctly")
         void shouldFilterPlansByType() {
-            List<MembershipPlanDTO> monthlyPlans = membershipService.getPlansByType(MembershipPlan.PlanType.MONTHLY);
-            List<MembershipPlanDTO> quarterlyPlans = membershipService.getPlansByType(MembershipPlan.PlanType.QUARTERLY);
-            List<MembershipPlanDTO> yearlyPlans = membershipService.getPlansByType(MembershipPlan.PlanType.YEARLY);
+            List<MembershipPlanDTO> monthlyPlans = planService.getPlansByType(MembershipPlan.PlanType.MONTHLY);
+            List<MembershipPlanDTO> quarterlyPlans = planService.getPlansByType(MembershipPlan.PlanType.QUARTERLY);
+            List<MembershipPlanDTO> yearlyPlans = planService.getPlansByType(MembershipPlan.PlanType.YEARLY);
 
             assertThat(monthlyPlans).hasSize(3);
             assertThat(quarterlyPlans).hasSize(3);
@@ -503,9 +512,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should filter plans by tier correctly")
         void shouldFilterPlansByTier() {
-            List<MembershipPlanDTO> silverPlans = membershipService.getPlansByTier("SILVER");
-            List<MembershipPlanDTO> goldPlans = membershipService.getPlansByTier("GOLD");
-            List<MembershipPlanDTO> platinumPlans = membershipService.getPlansByTier("PLATINUM");
+            List<MembershipPlanDTO> silverPlans = planService.getPlansByTier("SILVER");
+            List<MembershipPlanDTO> goldPlans = planService.getPlansByTier("GOLD");
+            List<MembershipPlanDTO> platinumPlans = planService.getPlansByTier("PLATINUM");
 
             assertThat(silverPlans).hasSize(3);
             assertThat(goldPlans).hasSize(3);
@@ -519,7 +528,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should validate plan-tier relationships")
         void shouldValidatePlanTierRelationships() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
 
             plans.forEach(plan -> {
                 assertThat(plan.getTier()).isNotNull();
@@ -542,7 +551,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should validate plan pricing calculations")
         void shouldValidatePlanPricingCalculations() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             List<MembershipPlanDTO> silverPlans = plans.stream().filter(p -> p.getTier().equals("SILVER")).toList();
 
             MembershipPlanDTO monthlyPlan = silverPlans.stream()
@@ -581,24 +590,18 @@ class MembershipApplicationTests {
 
         @BeforeEach
         void obtainAuthToken() {
-            // Register a test user and get a JWT token
-            UserDTO registerRequest = UserDTO.builder()
-                .name("API Test Admin")
-                .email(generateUniqueEmail("apiadmin"))
-                .phoneNumber("9000000000")
-                .address("1 Admin St")
-                .city("Mumbai")
-                .state("Maharashtra")
-                .pincode("400001")
-                .password("Admin@123")
+            // Log in as the pre-seeded admin user (created during application init)
+            LoginRequestDTO loginRequest = LoginRequestDTO.builder()
+                .email("admin@firstclub.com")
+                .password("Admin@firstclub1")
                 .build();
 
             ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
-                getBaseUrl() + "/api/v1/auth/register",
-                new HttpEntity<>(registerRequest, jsonHeaders()),
+                getBaseUrl() + "/api/v1/auth/login",
+                new HttpEntity<>(loginRequest, jsonHeaders()),
                 JwtResponseDTO.class
             );
-            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
             authToken = authResponse.getBody().getToken();
         }
 
@@ -751,7 +754,7 @@ class MembershipApplicationTests {
             UserDTO userRequest = createTestUser("Sub API Test", "subapi");
             UserDTO createdUser = userService.createUser(userRequest);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             MembershipPlanDTO silverPlan = plans.stream()
                 .filter(p -> p.getTier().equals("SILVER") && p.getType() == MembershipPlan.PlanType.MONTHLY)
                 .findFirst()
@@ -784,7 +787,7 @@ class MembershipApplicationTests {
             UserDTO userRequest = createTestUser("Cancel API Test", "cancelapi");
             UserDTO createdUser = userService.createUser(userRequest);
             
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             SubscriptionRequestDTO subscriptionRequest = SubscriptionRequestDTO.builder()
                 .userId(createdUser.getId())
                 .planId(plans.get(0).getId())
@@ -871,6 +874,117 @@ class MembershipApplicationTests {
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    // ========================================
+    // SECURITY LAYER TESTS
+    // ========================================
+
+    @Nested
+    @DisplayName("Security Layer")
+    class SecurityTests {
+
+        @Test
+        @DisplayName("Should return 401 when no Bearer token is provided")
+        void shouldReturn401WhenNoToken() {
+            ResponseEntity<String> response = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/membership/health",
+                HttpMethod.GET,
+                HttpEntity.EMPTY,
+                String.class
+            );
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+
+        @Test
+        @DisplayName("Should return 401 when an invalid/malformed token is provided")
+        void shouldReturn401ForInvalidToken() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth("this.is.not.a.valid.jwt");
+            ResponseEntity<String> response = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/membership/health",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+            );
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+
+        @Test
+        @DisplayName("Should return 403 when a regular user hits an admin-only endpoint")
+        void shouldReturn403WhenRegularUserHitsAdminEndpoint() {
+            // Register a regular user
+            UserDTO registerRequest = UserDTO.builder()
+                .name("Regular User")
+                .email(generateUniqueEmail("regularuser"))
+                .phoneNumber("9000000002")
+                .address("2 User St")
+                .city("Delhi")
+                .state("Delhi")
+                .pincode("110001")
+                .password("User@test1")
+                .build();
+            ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            String userToken = authResponse.getBody().getToken();
+
+            // Hit an admin-only endpoint
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(userToken);
+            ResponseEntity<String> response = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/membership/health",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+            );
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        }
+
+        @Test
+        @DisplayName("Should return 200 when a user accesses their own profile")
+        void shouldAllowUserToAccessOwnProfile() {
+            // Register a user
+            UserDTO registerRequest = UserDTO.builder()
+                .name("Self Access User")
+                .email(generateUniqueEmail("selfaccess"))
+                .phoneNumber("9000000003")
+                .address("3 User St")
+                .city("Pune")
+                .state("Maharashtra")
+                .pincode("411001")
+                .password("Self@test1")
+                .build();
+            ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            Long ownUserId = authResponse.getBody().getUserId();
+            String ownToken = authResponse.getBody().getToken();
+
+            // Access own user data
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(ownToken);
+            ResponseEntity<UserDTO> response = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users/" + ownUserId,
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                UserDTO.class
+            );
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody().getId()).isEqualTo(ownUserId);
+        }
+
+        private HttpHeaders jsonHeaders() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            return headers;
         }
     }
 }

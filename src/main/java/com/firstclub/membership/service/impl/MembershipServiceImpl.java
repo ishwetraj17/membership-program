@@ -3,8 +3,6 @@ package com.firstclub.membership.service.impl;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.*;
 import com.firstclub.membership.exception.MembershipException;
-import com.firstclub.membership.mapper.MembershipPlanMapper;
-import com.firstclub.membership.mapper.MembershipTierMapper;
 import com.firstclub.membership.mapper.SubscriptionMapper;
 import com.firstclub.membership.repository.*;
 import com.firstclub.membership.service.MembershipService;
@@ -13,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -44,9 +41,8 @@ public class MembershipServiceImpl implements MembershipService {
     private final MembershipTierRepository tierRepository;
     private final MembershipPlanRepository planRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final SubscriptionHistoryRepository subscriptionHistoryRepository;
     private final UserService userService;
-    private final MembershipPlanMapper planMapper;
-    private final MembershipTierMapper tierMapper;
     private final SubscriptionMapper subscriptionMapper;
 
     @Value("${membership.pricing.silver:299}")
@@ -140,7 +136,19 @@ public class MembershipServiceImpl implements MembershipService {
     private void createSampleUsers() {
         if (userService.getAllUsers().isEmpty()) {
             log.info("Creating sample users for demonstration...");
-            
+
+            // Admin user — used by integration tests and management
+            UserDTO admin = UserDTO.builder()
+                .name("System Admin")
+                .email("admin@firstclub.com")
+                .phoneNumber("9000000001")
+                .address("1 Admin St")
+                .city("Mumbai")
+                .state("Maharashtra")
+                .pincode("400001")
+                .password("Admin@firstclub1")
+                .build();
+
             UserDTO user1 = UserDTO.builder()
                 .name("Karan Singh")
                 .email("karan.singh@flipkart.com")
@@ -175,6 +183,7 @@ public class MembershipServiceImpl implements MembershipService {
                 .build();
             
             try {
+                userService.createAdminUser(admin);
                 userService.createUser(user1);
                 userService.createUser(user2);
                 userService.createUser(user3);
@@ -248,84 +257,6 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     @Override
-    @Transactional(readOnly = true)
-    @Cacheable("plans")
-    public List<MembershipPlanDTO> getAllPlans() {
-        return planRepository.findAll().stream()
-            .map(this::convertPlanToDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    @Cacheable("plans")
-    public List<MembershipPlanDTO> getActivePlans() {
-        return planRepository.findByIsActiveTrue().stream()
-            .map(this::convertPlanToDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    @Cacheable(value = "plansByTier", key = "#tierName.toUpperCase()")
-    public List<MembershipPlanDTO> getPlansByTier(String tierName) {
-        MembershipTier tier = tierRepository.findByName(tierName.toUpperCase())
-            .orElseThrow(() -> MembershipException.tierNotFound(tierName));
-            
-        return planRepository.findByTierAndIsActiveTrue(tier).stream()
-            .map(this::convertPlanToDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    public List<MembershipPlanDTO> getPlansByTierId(Long tierId) {
-        MembershipTier tier = tierRepository.findById(tierId)
-            .orElseThrow(() -> MembershipException.tierNotFound("ID: " + tierId));
-            
-        return planRepository.findByTierAndIsActiveTrue(tier).stream()
-            .map(this::convertPlanToDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    @Cacheable(value = "plansByType", key = "#type.name()")
-    public List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type) {
-        return planRepository.findByTypeAndIsActiveTrue(type).stream()
-            .map(this::convertPlanToDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    public Optional<MembershipPlanDTO> getPlanById(Long id) {
-        return planRepository.findById(id).map(this::convertPlanToDTO);
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    @Cacheable("tiers")
-    public List<MembershipTierDTO> getAllTiers() {
-        return tierRepository.findAll().stream()
-            .map(tierMapper::toDTO)
-            .collect(Collectors.toList());
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    @Cacheable(value = "tiers", key = "#name.toUpperCase()")
-    public Optional<MembershipTierDTO> getTierByName(String name) {
-        return tierRepository.findByName(name.toUpperCase()).map(tierMapper::toDTO);
-    }
-    
-    @Override
-    @Transactional(readOnly = true)
-    public Optional<MembershipTierDTO> getTierById(Long id) {
-        return tierRepository.findById(id).map(tierMapper::toDTO);
-    }
-    
-    @Override
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public SubscriptionDTO createSubscription(SubscriptionRequestDTO request) {
         log.info("Creating subscription for user: {} with plan: {}", request.getUserId(), request.getPlanId());
@@ -373,6 +304,9 @@ public class MembershipServiceImpl implements MembershipService {
         Subscription savedSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription created successfully with ID: {}", savedSubscription.getId());
         
+        recordHistory(savedSubscription, SubscriptionHistory.EventType.CREATED,
+            null, plan.getId(), null, Subscription.SubscriptionStatus.ACTIVE, "Subscription created");
+
         return convertSubscriptionToDTO(savedSubscription);
     }
     
@@ -536,11 +470,15 @@ public class MembershipServiceImpl implements MembershipService {
         subscription.setCancelledAt(LocalDateTime.now());
         subscription.setCancellationReason(reason);
         subscription.setAutoRenewal(false);
-        subscription.setUpdatedAt(LocalDateTime.now());
+        // @UpdateTimestamp on updatedAt handles the timestamp — no manual call needed
         
         Subscription cancelledSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription cancelled successfully: {} with reason: {}", subscriptionId, reason);
         
+        recordHistory(cancelledSubscription, SubscriptionHistory.EventType.CANCELLED,
+            cancelledSubscription.getPlan().getId(), cancelledSubscription.getPlan().getId(),
+            Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.CANCELLED, reason);
+
         return convertSubscriptionToDTO(cancelledSubscription);
     }
     
@@ -566,6 +504,10 @@ public class MembershipServiceImpl implements MembershipService {
         Subscription renewedSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription renewed successfully: {}", subscriptionId);
         
+        recordHistory(renewedSubscription, SubscriptionHistory.EventType.RENEWED,
+            renewedSubscription.getPlan().getId(), renewedSubscription.getPlan().getId(),
+            Subscription.SubscriptionStatus.EXPIRED, Subscription.SubscriptionStatus.ACTIVE, "Subscription renewed");
+
         return convertSubscriptionToDTO(renewedSubscription);
     }
     
@@ -586,14 +528,6 @@ public class MembershipServiceImpl implements MembershipService {
             .collect(Collectors.toList());
     }
     
-    @Override
-    @Transactional(readOnly = true)
-    public List<SubscriptionDTO> getAllSubscriptions() {
-        return subscriptionRepository.findAll().stream()
-            .map(this::convertSubscriptionToDTO)
-            .collect(Collectors.toList());
-    }
-
     @Override
     @Transactional(readOnly = true)
     public Page<SubscriptionDTO> getAllSubscriptionsPaged(Pageable pageable) {
@@ -634,14 +568,19 @@ public class MembershipServiceImpl implements MembershipService {
             throw new MembershipException("Invalid upgrade: new plan must be higher tier or longer duration", "INVALID_UPGRADE");
         }
         
-        // Calculate pro-rated amount for upgrade
-        BigDecimal priceDifference = newPlan.getPrice().subtract(currentPlan.getPrice());
+        // Use pro-rated calculation: charge only for remaining days at new plan rate
+        BigDecimal proRatedAmount = calculateProRatedAmount(subscription, currentPlan, newPlan);
         subscription.setPlan(newPlan);
-        subscription.setPaidAmount(subscription.getPaidAmount().add(priceDifference));
-        subscription.setUpdatedAt(LocalDateTime.now());
+        subscription.setPaidAmount(subscription.getPaidAmount().add(proRatedAmount));
         
         Subscription upgradedSubscription = subscriptionRepository.save(subscription);
-        log.info("Subscription upgraded successfully: {} to plan: {}", subscriptionId, newPlan.getName());
+        log.info("Subscription upgraded successfully: {} to plan: {} (pro-rated charge: {})",
+            subscriptionId, newPlan.getName(), proRatedAmount);
+        
+        recordHistory(upgradedSubscription, SubscriptionHistory.EventType.UPGRADED,
+            currentPlan.getId(), newPlan.getId(),
+            Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.ACTIVE,
+            "Upgraded to " + newPlan.getName());
         
         return convertSubscriptionToDTO(upgradedSubscription);
     }
@@ -652,18 +591,41 @@ public class MembershipServiceImpl implements MembershipService {
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
             .orElseThrow(() -> new MembershipException("Subscription not found", "SUBSCRIPTION_NOT_FOUND"));
-            
+
+        if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
+            throw new MembershipException("Cannot downgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
+        }
+
         MembershipPlan newPlan = planRepository.findById(newPlanId)
             .orElseThrow(() -> new MembershipException("Plan not found", "PLAN_NOT_FOUND"));
             
-        if (newPlan.getTier().getLevel() >= subscription.getPlan().getTier().getLevel()) {
-            throw new MembershipException("New plan must be of lower tier", "INVALID_DOWNGRADE");
+        MembershipPlan currentPlan = subscription.getPlan();
+
+        // Allow lower tier OR same tier with shorter duration (e.g. yearly → monthly)
+        boolean isValidDowngrade = newPlan.getTier().getLevel() < currentPlan.getTier().getLevel() ||
+            (newPlan.getTier().getLevel().equals(currentPlan.getTier().getLevel()) &&
+             newPlan.getDurationInMonths() < currentPlan.getDurationInMonths());
+
+        if (!isValidDowngrade) {
+            throw new MembershipException(
+                "Invalid downgrade: new plan must be lower tier or shorter duration within same tier",
+                "INVALID_DOWNGRADE"
+            );
         }
         
+        // Apply pro-rated credit for unused portion of current plan (negative = credit)
+        BigDecimal proRatedDiff = calculateProRatedAmount(subscription, currentPlan, newPlan);
         subscription.setPlan(newPlan);
+        subscription.setPaidAmount(subscription.getPaidAmount().add(proRatedDiff));
         
         Subscription downgradedSubscription = subscriptionRepository.save(subscription);
-        log.info("Subscription downgraded successfully: {}", subscriptionId);
+        log.info("Subscription downgraded successfully: {} to plan: {} (pro-rated diff: {})",
+            subscriptionId, newPlan.getName(), proRatedDiff);
+        
+        recordHistory(downgradedSubscription, SubscriptionHistory.EventType.DOWNGRADED,
+            currentPlan.getId(), newPlan.getId(),
+            Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.ACTIVE,
+            "Downgraded to " + newPlan.getName());
         
         return convertSubscriptionToDTO(downgradedSubscription);
     }
@@ -671,19 +633,8 @@ public class MembershipServiceImpl implements MembershipService {
     @Override
     public void processExpiredSubscriptions() {
         log.info("Processing expired subscriptions...");
-        
-        List<Subscription> expiredSubscriptions = subscriptionRepository.findByStatus(Subscription.SubscriptionStatus.ACTIVE)
-            .stream()
-            .filter(sub -> sub.getEndDate().isBefore(LocalDateTime.now()))
-            .collect(Collectors.toList());
-            
-        expiredSubscriptions.forEach(sub -> {
-            sub.setStatus(Subscription.SubscriptionStatus.EXPIRED);
-            subscriptionRepository.save(sub);
-            log.info("Marked subscription as expired: {}", sub.getId());
-        });
-        
-        log.info("Processed {} expired subscriptions", expiredSubscriptions.size());
+        int expired = subscriptionRepository.bulkExpireSubscriptions(LocalDateTime.now());
+        log.info("Marked {} subscriptions as EXPIRED via bulk update", expired);
     }
     
     @Override
@@ -808,28 +759,25 @@ public class MembershipServiceImpl implements MembershipService {
     }
 
     /**
-     * Convert plan to DTO using MapStruct mapper, then set computed fields.
+     * Records a subscription lifecycle event to the audit log.
      */
-    private MembershipPlanDTO convertPlanToDTO(MembershipPlan plan) {
-        MembershipPlanDTO dto = planMapper.toDTO(plan);
-
-        BigDecimal monthlyPrice = plan.getMonthlyPrice();
-        dto.setMonthlyPrice(monthlyPrice);
-
-        BigDecimal savings = BigDecimal.ZERO;
-        if (plan.getType() != MembershipPlan.PlanType.MONTHLY) {
-            Optional<MembershipPlan> monthlyPlan = planRepository
-                .findByTierAndIsActiveTrue(plan.getTier())
-                .stream()
-                .filter(p -> p.getType() == MembershipPlan.PlanType.MONTHLY)
-                .findFirst();
-
-            if (monthlyPlan.isPresent()) {
-                savings = plan.calculateSavings(monthlyPlan.get().getPrice());
-            }
-        }
-        dto.setSavings(savings);
-        return dto;
+    private void recordHistory(Subscription subscription,
+                               SubscriptionHistory.EventType eventType,
+                               Long oldPlanId,
+                               Long newPlanId,
+                               Subscription.SubscriptionStatus oldStatus,
+                               Subscription.SubscriptionStatus newStatus,
+                               String reason) {
+        SubscriptionHistory entry = SubscriptionHistory.builder()
+            .subscription(subscription)
+            .eventType(eventType)
+            .oldPlanId(oldPlanId)
+            .newPlanId(newPlanId)
+            .oldStatus(oldStatus)
+            .newStatus(newStatus)
+            .reason(reason)
+            .build();
+        subscriptionHistoryRepository.save(entry);
     }
 
     /**

@@ -2,7 +2,7 @@ package com.firstclub.membership.controller;
 
 import com.firstclub.membership.dto.MembershipPlanDTO;
 import com.firstclub.membership.entity.MembershipPlan;
-import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.PlanService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
 @Tag(name = "Plan Discovery", description = "APIs for discovering and comparing membership plans")
 public class PlanController {
     
-    private final MembershipService membershipService;
+    private final PlanService planService;
     
     @GetMapping
     @Operation(
@@ -47,7 +47,7 @@ public class PlanController {
         content = @Content(schema = @Schema(implementation = MembershipPlanDTO.class))
     )
     public ResponseEntity<List<MembershipPlanDTO>> getAllPlans() {
-        List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+        List<MembershipPlanDTO> plans = planService.getActivePlans();
         log.info("Retrieved {} available plans for user selection", plans.size());
         return ResponseEntity.ok(plans);
     }
@@ -59,7 +59,7 @@ public class PlanController {
     )
     @ApiResponse(responseCode = "200", description = "Grouped plans retrieved successfully")
     public ResponseEntity<Map<String, Map<String, MembershipPlanDTO>>> getGroupedPlans() {
-        List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+        List<MembershipPlanDTO> plans = planService.getActivePlans();
         
         // Group by tier, then by duration type
         Map<String, Map<String, MembershipPlanDTO>> groupedPlans = plans.stream()
@@ -88,7 +88,7 @@ public class PlanController {
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTier(
             @Parameter(description = "Membership tier name", example = "GOLD") 
             @PathVariable String tierName) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByTier(tierName);
+        List<MembershipPlanDTO> plans = planService.getPlansByTier(tierName);
         log.info("Retrieved {} plan duration options for tier: {}", plans.size(), tierName);
         return ResponseEntity.ok(plans);
     }
@@ -105,7 +105,7 @@ public class PlanController {
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByDuration(
             @Parameter(description = "Plan duration type", example = "YEARLY") 
             @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByType(type);
+        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
         log.info("Retrieved {} tier options for duration: {}", plans.size(), type);
         return ResponseEntity.ok(plans);
     }
@@ -122,7 +122,7 @@ public class PlanController {
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByType(
             @Parameter(description = "Plan type", example = "MONTHLY") 
             @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = membershipService.getPlansByType(type);
+        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
         log.info("Retrieved {} tier options for plan type: {}", plans.size(), type);
         return ResponseEntity.ok(plans);
     }
@@ -139,7 +139,7 @@ public class PlanController {
     public ResponseEntity<MembershipPlanDTO> getPlanDetails(
             @Parameter(description = "Plan ID", example = "1") 
             @PathVariable Long id) {
-        return membershipService.getPlanById(id)
+        return planService.getPlanById(id)
             .map(plan -> {
                 log.info("Retrieved details for plan: {} ({})", plan.getName(), plan.getId());
                 return ResponseEntity.ok(plan);
@@ -164,7 +164,7 @@ public class PlanController {
             .toList();
             
         List<MembershipPlanDTO> comparisonPlans = ids.stream()
-            .map(membershipService::getPlanById)
+            .map(planService::getPlanById)
             .filter(java.util.Optional::isPresent)
             .map(java.util.Optional::get)
             .toList();
@@ -180,7 +180,7 @@ public class PlanController {
     )
     @ApiResponse(responseCode = "200", description = "Plan recommendations retrieved successfully")
     public ResponseEntity<Map<String, Object>> getPlanRecommendations() {
-        List<MembershipPlanDTO> allPlans = membershipService.getActivePlans();
+        List<MembershipPlanDTO> allPlans = planService.getActivePlans();
         
         // Find most popular tier (this would normally come from analytics)
         // For now, recommend Gold tier as a balanced option

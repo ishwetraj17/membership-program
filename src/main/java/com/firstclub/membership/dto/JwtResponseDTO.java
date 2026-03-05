@@ -17,6 +17,7 @@ import java.util.Set;
 public class JwtResponseDTO {
 
     private String token;
+    private String refreshToken;
 
     @Builder.Default
     private String type = "Bearer";

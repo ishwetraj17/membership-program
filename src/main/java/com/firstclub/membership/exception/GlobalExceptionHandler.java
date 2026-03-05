@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -182,6 +183,24 @@ public class GlobalExceptionHandler {
             .build();
 
         return ResponseEntity.badRequest().body(error);
+    }
+
+    /**
+     * Handle Spring Security access denied (403 Forbidden).
+     * Without this, AuthorizationDeniedException is caught by the generic handler returning 500.
+     */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(AuthorizationDeniedException e) {
+        log.warn("Access denied: {}", e.getMessage());
+
+        ErrorResponse error = ErrorResponse.builder()
+            .message("Access denied: you do not have permission to perform this action")
+            .errorCode("ACCESS_DENIED")
+            .timestamp(LocalDateTime.now())
+            .httpStatus(HttpStatus.FORBIDDEN.value())
+            .build();
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
     }
 
     /**

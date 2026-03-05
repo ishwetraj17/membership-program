@@ -17,6 +17,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,12 +34,14 @@ public class SubscriptionController {
 
     private final MembershipService membershipService;
 
-    @Operation(summary = "Get all subscriptions", description = "Retrieve all subscriptions with optional filtering and pagination")
+    @Operation(summary = "Get all subscriptions", description = "Admin-only: Retrieve all subscriptions with optional filtering and pagination")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Successfully retrieved subscriptions"),
+        @ApiResponse(responseCode = "403", description = "Access denied - admin role required"),
         @ApiResponse(responseCode = "500", description = "Internal server error")
     })
     @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Page<SubscriptionDTO>> getAllSubscriptions(
             @Parameter(description = "Filter by subscription status") @RequestParam(required = false) String status,
             @Parameter(description = "Filter by user ID") @RequestParam(required = false) Long userId,
