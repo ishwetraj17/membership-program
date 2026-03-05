@@ -72,11 +72,14 @@ public class MembershipPlan {
 
     /**
      * Calculate effective monthly price
-     * 
+     *
      * For quarterly/yearly plans, this shows the per-month cost
      * which is useful for comparison.
      */
     public BigDecimal getMonthlyPrice() {
+        if (durationInMonths == null || durationInMonths == 0) {
+            throw new IllegalStateException("durationInMonths must be set before calling getMonthlyPrice()");
+        }
         return price.divide(new BigDecimal(durationInMonths), 2, RoundingMode.HALF_UP);
     }
 

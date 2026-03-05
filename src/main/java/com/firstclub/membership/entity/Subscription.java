@@ -20,7 +20,11 @@ import java.time.LocalDateTime;
  * Implemented by Shwet Raj
  */
 @Entity
-@Table(name = "subscriptions")
+@Table(name = "subscriptions", indexes = {
+    @Index(name = "idx_subscription_status",   columnList = "status"),
+    @Index(name = "idx_subscription_end_date",  columnList = "end_date"),
+    @Index(name = "idx_subscription_user_id",   columnList = "user_id")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

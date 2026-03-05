@@ -6,9 +6,11 @@ import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -95,7 +97,7 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Should initialize 3 membership tiers correctly")
         void shouldInitializeMembershipTiers() {
-            List<com.firstclub.membership.entity.MembershipTier> tiers = membershipService.getAllTiers();
+            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = membershipService.getAllTiers();
             
             assertThat(tiers).hasSize(3);
             assertThat(tiers)
@@ -197,13 +199,13 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Tier discount percentages should be correct")
         void shouldValidateTierDiscountPercentages() {
-            List<com.firstclub.membership.entity.MembershipTier> tiers = membershipService.getAllTiers();
+            List<com.firstclub.membership.dto.MembershipTierDTO> tiers = membershipService.getAllTiers();
             
-            com.firstclub.membership.entity.MembershipTier silverTier = tiers.stream()
+            com.firstclub.membership.dto.MembershipTierDTO silverTier = tiers.stream()
                 .filter(t -> t.getName().equals("SILVER")).findFirst().orElseThrow();
-            com.firstclub.membership.entity.MembershipTier goldTier = tiers.stream()
+            com.firstclub.membership.dto.MembershipTierDTO goldTier = tiers.stream()
                 .filter(t -> t.getName().equals("GOLD")).findFirst().orElseThrow();
-            com.firstclub.membership.entity.MembershipTier platinumTier = tiers.stream()
+            com.firstclub.membership.dto.MembershipTierDTO platinumTier = tiers.stream()
                 .filter(t -> t.getName().equals("PLATINUM")).findFirst().orElseThrow();
             
             assertThat(silverTier.getDiscountPercentage()).isEqualByComparingTo(new BigDecimal("5.00"));
@@ -578,10 +580,49 @@ class MembershipApplicationTests {
     @DisplayName("REST API Integration")
     class RestApiTests {
 
-        private <T> HttpEntity<T> createJsonRequest(T body) {
+        private String authToken;
+
+        @BeforeEach
+        void obtainAuthToken() {
+            // Register a test user and get a JWT token
+            UserDTO registerRequest = UserDTO.builder()
+                .name("API Test Admin")
+                .email(generateUniqueEmail("apiadmin"))
+                .phoneNumber("9000000000")
+                .address("1 Admin St")
+                .city("Mumbai")
+                .state("Maharashtra")
+                .pincode("400001")
+                .password("Admin@123")
+                .build();
+
+            ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            authToken = authResponse.getBody().getToken();
+        }
+
+        private HttpHeaders jsonHeaders() {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            return new HttpEntity<>(body, headers);
+            return headers;
+        }
+
+        private HttpHeaders authHeaders() {
+            HttpHeaders headers = jsonHeaders();
+            headers.setBearerAuth(authToken);
+            return headers;
+        }
+
+        private <T> HttpEntity<T> createJsonRequest(T body) {
+            return new HttpEntity<>(body, authHeaders());
+        }
+
+        private HttpEntity<Void> authGet() {
+            return new HttpEntity<>(authHeaders());
         }
 
         @Test
@@ -609,9 +650,9 @@ class MembershipApplicationTests {
             UserDTO userRequest = createTestUser("Get User Test", "getuser");
             UserDTO createdUser = userService.createUser(userRequest);
 
-            ResponseEntity<UserDTO> response = restTemplate.getForEntity(
+            ResponseEntity<UserDTO> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/users/" + createdUser.getId(),
-                UserDTO.class
+                HttpMethod.GET, authGet(), UserDTO.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -637,9 +678,9 @@ class MembershipApplicationTests {
 
             userService.createUser(userRequest);
 
-            ResponseEntity<UserDTO> response = restTemplate.getForEntity(
+            ResponseEntity<UserDTO> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/users/email/" + uniqueEmail,
-                UserDTO.class
+                HttpMethod.GET, authGet(), UserDTO.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -651,9 +692,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Plan API - Get all plans via GET /api/v1/membership/plans")
         void shouldGetAllPlansViaRestApi() {
-            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.getForEntity(
+            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/plans",
-                MembershipPlanDTO[].class
+                HttpMethod.GET, authGet(), MembershipPlanDTO[].class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -664,9 +705,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Plan API - Get plans by tier via GET /api/v1/membership/plans/tier/{tier}")
         void shouldGetPlansByTierViaRestApi() {
-            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.getForEntity(
+            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/plans/tier/GOLD",
-                MembershipPlanDTO[].class
+                HttpMethod.GET, authGet(), MembershipPlanDTO[].class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -681,9 +722,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Plan API - Get plans by type via GET /api/v1/membership/plans/type/{type}")
         void shouldGetPlansByTypeViaRestApi() {
-            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.getForEntity(
+            ResponseEntity<MembershipPlanDTO[]> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/plans/type/YEARLY",
-                MembershipPlanDTO[].class
+                HttpMethod.GET, authGet(), MembershipPlanDTO[].class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -698,9 +739,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Tier API - Get all tiers via GET /api/v1/membership/tiers")
         void shouldCallTiersEndpoint() {
-            ResponseEntity<Object> response = restTemplate.getForEntity(
+            ResponseEntity<Object> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/tiers",
-                Object.class
+                HttpMethod.GET, authGet(), Object.class
             );
 
             // Should return 200 OK with @JsonIgnore fix
@@ -708,7 +749,7 @@ class MembershipApplicationTests {
         }
 
         @Test
-        @DisplayName("Subscription API - Create subscription via POST /api/v1/membership/subscriptions")
+        @DisplayName("Subscription API - Create subscription via POST /api/v1/subscriptions")
         void shouldCreateSubscriptionViaRestApi() {
             UserDTO userRequest = createTestUser("Sub API Test", "subapi");
             UserDTO createdUser = userService.createUser(userRequest);
@@ -728,7 +769,7 @@ class MembershipApplicationTests {
             HttpEntity<SubscriptionRequestDTO> request = createJsonRequest(subscriptionRequest);
 
             ResponseEntity<SubscriptionDTO> response = restTemplate.postForEntity(
-                getBaseUrl() + "/api/v1/membership/subscriptions",
+                getBaseUrl() + "/api/v1/subscriptions",
                 request,
                 SubscriptionDTO.class
             );
@@ -741,7 +782,7 @@ class MembershipApplicationTests {
         }
 
         @Test
-        @DisplayName("Subscription API - Cancel subscription via PUT /api/v1/membership/subscriptions/{id}/cancel")
+        @DisplayName("Subscription API - Cancel subscription via PUT /api/v1/subscriptions/{id}/cancel")
         void shouldCancelSubscriptionViaRestApi() {
             UserDTO userRequest = createTestUser("Cancel API Test", "cancelapi");
             UserDTO createdUser = userService.createUser(userRequest);
@@ -756,14 +797,10 @@ class MembershipApplicationTests {
             SubscriptionDTO createdSubscription = membershipService.createSubscription(subscriptionRequest);
 
             String cancellationReason = "API Test Cancellation";
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("reason", cancellationReason);
-            HttpEntity<Map<String, String>> request = createJsonRequest(requestBody);
-
             ResponseEntity<SubscriptionDTO> response = restTemplate.exchange(
-                getBaseUrl() + "/api/v1/membership/subscriptions/" + createdSubscription.getId() + "/cancel",
+                getBaseUrl() + "/api/v1/subscriptions/" + createdSubscription.getId() + "/cancel?reason=" + cancellationReason,
                 HttpMethod.PUT,
-                request,
+                authGet(),
                 SubscriptionDTO.class
             );
 
@@ -776,9 +813,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("System API - Get health via GET /api/v1/membership/health")
         void shouldGetSystemHealthViaRestApi() {
-            ResponseEntity<Object> response = restTemplate.getForEntity(
+            ResponseEntity<Object> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/health",
-                Object.class
+                HttpMethod.GET, authGet(), Object.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -788,9 +825,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("System API - Get analytics via GET /api/v1/membership/analytics")
         void shouldGetAnalyticsViaRestApi() {
-            ResponseEntity<Object> response = restTemplate.getForEntity(
+            ResponseEntity<Object> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/analytics",
-                Object.class
+                HttpMethod.GET, authGet(), Object.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -800,9 +837,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Error Handling - Should return 404 for non-existent user")
         void shouldHandle404ForNonExistentUser() {
-            ResponseEntity<String> response = restTemplate.getForEntity(
+            ResponseEntity<String> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/users/99999",
-                String.class
+                HttpMethod.GET, authGet(), String.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -811,9 +848,9 @@ class MembershipApplicationTests {
         @Test
         @DisplayName("Error Handling - Should return 404 for non-existent plan")
         void shouldHandle404ForNonExistentPlan() {
-            ResponseEntity<String> response = restTemplate.getForEntity(
+            ResponseEntity<String> response = restTemplate.exchange(
                 getBaseUrl() + "/api/v1/membership/plans/99999",
-                String.class
+                HttpMethod.GET, authGet(), String.class
             );
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -831,7 +868,7 @@ class MembershipApplicationTests {
             HttpEntity<SubscriptionRequestDTO> request = createJsonRequest(invalidRequest);
 
             ResponseEntity<String> response = restTemplate.postForEntity(
-                getBaseUrl() + "/api/v1/membership/subscriptions",
+                getBaseUrl() + "/api/v1/subscriptions",
                 request,
                 String.class
             );

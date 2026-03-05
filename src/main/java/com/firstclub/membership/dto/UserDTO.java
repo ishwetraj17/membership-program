@@ -1,5 +1,6 @@
 package com.firstclub.membership.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.firstclub.membership.entity.User;
 import lombok.Data;
 import lombok.Builder;
@@ -10,10 +11,10 @@ import jakarta.validation.constraints.*;
 
 /**
  * Data Transfer Object for User information
- * 
+ *
  * Used for API requests/responses to avoid exposing entity details.
  * Includes validation for Indian phone numbers and pincodes.
- * 
+ *
  * Implemented by Shwet Raj
  */
 @Data
@@ -55,4 +56,11 @@ public class UserDTO {
     private String pincode;
 
     private User.UserStatus status;
+
+    /**
+     * Password is accepted on create/update but NEVER serialized in responses.
+     * WRITE_ONLY ensures it is deserialized from requests but excluded from all JSON output.
+     */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String password;
 }

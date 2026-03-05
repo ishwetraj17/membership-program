@@ -9,7 +9,9 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * User entity for storing customer information
@@ -20,7 +22,9 @@ import java.util.List;
  * Implemented by Shwet Raj
  */
 @Entity
-@Table(name = "users")
+@Table(name = "users", indexes = {
+    @Index(name = "idx_user_email", columnList = "email")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -33,6 +37,17 @@ public class User {
 
     @Column(nullable = false, unique = true)
     private String email;
+
+    // BCrypt-encoded — never stored or returned in plain text
+    @Column(nullable = false)
+    private String password;
+
+    // Roles: ROLE_USER, ROLE_ADMIN
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "role")
+    @Builder.Default
+    private Set<String> roles = new HashSet<>();
 
     @Column(nullable = false)
     private String name;
@@ -57,6 +72,11 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserStatus status;
+
+    // Soft delete flag - users are never physically removed from the database
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean isDeleted = false;
 
     // One user can have multiple subscriptions over time
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)

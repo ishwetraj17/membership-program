@@ -10,11 +10,11 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * DTO for subscription details with user and plan information
- * 
- * Complete subscription view including user details, plan benefits,
- * and current status for API responses.
- * 
+ * DTO for subscription details with user and plan information.
+ *
+ * Tier benefit fields are now nested inside {@link TierBenefitsDTO}
+ * instead of being polluted at the top level.
+ *
  * Implemented by Shwet Raj
  */
 @Data
@@ -33,29 +33,24 @@ public class SubscriptionDTO {
     private Boolean autoRenewal;
     private Long daysRemaining;
     private Boolean isActive;
-    
+
     // User information
     private Long userId;
     private String userName;
     private String userEmail;
-    
+
     // Plan information
     private Long planId;
     private String planName;
     private String planType;
-    
-    // Tier information and benefits
+
+    // Tier summary (name + level stay flat for easy filtering/sorting)
     private String tier;
     private Integer tierLevel;
-    private BigDecimal discountPercentage;
-    private Boolean freeDelivery;
-    private Boolean exclusiveDeals;
-    private Boolean earlyAccess;
-    private Boolean prioritySupport;
-    private Integer maxCouponsPerMonth;
-    private Integer deliveryDays;
-    private String additionalBenefits;
-    
+
+    // All tier benefit details are nested — keeps the DTO clean
+    private TierBenefitsDTO tierBenefits;
+
     // Cancellation details (if applicable)
     private LocalDateTime cancelledAt;
     private String cancellationReason;

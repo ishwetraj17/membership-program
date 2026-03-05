@@ -2,6 +2,8 @@ package com.firstclub.membership.service;
 
 import com.firstclub.membership.dto.UserDTO;
 import com.firstclub.membership.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
@@ -51,10 +53,18 @@ public interface UserService {
 
     /**
      * Get all users
-     * 
+     *
      * @return list of all users
      */
     List<UserDTO> getAllUsers();
+
+    /**
+     * Get all users with pagination
+     *
+     * @param pageable pagination parameters
+     * @return page of users
+     */
+    Page<UserDTO> getAllUsersPaged(Pageable pageable);
 
     /**
      * Delete user account

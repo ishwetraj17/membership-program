@@ -3,19 +3,28 @@ package com.firstclub.membership.service.impl;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.*;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.mapper.MembershipPlanMapper;
+import com.firstclub.membership.mapper.MembershipTierMapper;
+import com.firstclub.membership.mapper.SubscriptionMapper;
 import com.firstclub.membership.repository.*;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -36,6 +45,18 @@ public class MembershipServiceImpl implements MembershipService {
     private final MembershipPlanRepository planRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final UserService userService;
+    private final MembershipPlanMapper planMapper;
+    private final MembershipTierMapper tierMapper;
+    private final SubscriptionMapper subscriptionMapper;
+
+    @Value("${membership.pricing.silver:299}")
+    private BigDecimal silverBasePrice;
+
+    @Value("${membership.pricing.gold:499}")
+    private BigDecimal goldBasePrice;
+
+    @Value("${membership.pricing.platinum:799}")
+    private BigDecimal platinumBasePrice;
     
     /**
      * Initialize default data on application startup
@@ -50,34 +71,76 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     @Override
+    @CacheEvict(value = {"plans", "plansByTier", "plansByType", "tiers"}, allEntries = true)
     public void initializeDefaultData() {
         log.info("Starting membership system initialization...");
         
-        // Only create if no tiers exist
         if (tierRepository.count() == 0) {
-            MembershipTier[] defaultTiers = MembershipTier.getDefaultTiers();
+            List<MembershipTier> defaultTiers = buildDefaultTiers();
             for (MembershipTier tier : defaultTiers) {
                 MembershipTier savedTier = tierRepository.save(tier);
                 log.info("Created tier: {} with {}% discount", savedTier.getName(), savedTier.getDiscountPercentage());
-                
-                // Create plans for each tier
                 createDefaultPlansForTier(savedTier);
             }
             log.info("Membership system initialized successfully!");
         }
     }
+
+    /**
+     * Tier seed definitions — previously a static factory on the entity class (wrong layer).
+     * Business/configuration data belongs in the service layer.
+     */
+    private List<MembershipTier> buildDefaultTiers() {
+        return List.of(
+            MembershipTier.builder()
+                .name("SILVER")
+                .description("Essential benefits for new members")
+                .level(1)
+                .discountPercentage(new BigDecimal("5.00"))
+                .freeDelivery(false)
+                .exclusiveDeals(false)
+                .earlyAccess(false)
+                .prioritySupport(false)
+                .maxCouponsPerMonth(2)
+                .deliveryDays(5)
+                .additionalBenefits("Basic member perks and content access")
+                .build(),
+            MembershipTier.builder()
+                .name("GOLD")
+                .description("Premium benefits with free delivery")
+                .level(2)
+                .discountPercentage(new BigDecimal("10.00"))
+                .freeDelivery(true)
+                .exclusiveDeals(true)
+                .earlyAccess(true)
+                .prioritySupport(false)
+                .maxCouponsPerMonth(5)
+                .deliveryDays(3)
+                .additionalBenefits("Free delivery, exclusive deals, early sale access")
+                .build(),
+            MembershipTier.builder()
+                .name("PLATINUM")
+                .description("Ultimate tier with all premium features")
+                .level(3)
+                .discountPercentage(new BigDecimal("15.00"))
+                .freeDelivery(true)
+                .exclusiveDeals(true)
+                .earlyAccess(true)
+                .prioritySupport(true)
+                .maxCouponsPerMonth(10)
+                .deliveryDays(1)
+                .additionalBenefits("All benefits plus priority support and same-day delivery")
+                .build()
+        );
+    }
     
     /**
      * Create sample users for demo purposes
-     * 
-     * These users help demonstrate the system functionality.
-     * Added for now - might want to remove in production
      */
     private void createSampleUsers() {
         if (userService.getAllUsers().isEmpty()) {
             log.info("Creating sample users for demonstration...");
             
-            // Sample user 1 - Tech professional from Bangalore
             UserDTO user1 = UserDTO.builder()
                 .name("Karan Singh")
                 .email("karan.singh@flipkart.com")
@@ -86,9 +149,9 @@ public class MembershipServiceImpl implements MembershipService {
                 .city("Bangalore")
                 .state("Karnataka")
                 .pincode("560102")
+                .password("Demo@1234")
                 .build();
                 
-            // Sample user 2 - Business professional from Mumbai
             UserDTO user2 = UserDTO.builder()
                 .name("Ananya Sharma")
                 .email("ananya.sharma@tcs.com")
@@ -97,9 +160,9 @@ public class MembershipServiceImpl implements MembershipService {
                 .city("Mumbai")
                 .state("Maharashtra")
                 .pincode("400058")
+                .password("Demo@1234")
                 .build();
                 
-            // Sample user 3 - Startup founder from Delhi
             UserDTO user3 = UserDTO.builder()
                 .name("Rohit Agarwal")
                 .email("rohit.agarwal@zomato.com")
@@ -108,6 +171,7 @@ public class MembershipServiceImpl implements MembershipService {
                 .city("New Delhi")
                 .state("Delhi")
                 .pincode("110001")
+                .password("Demo@1234")
                 .build();
             
             try {
@@ -171,22 +235,21 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     /**
-     * Get base pricing for tier levels
-     * 
-     * Pricing in INR based on Indian market research.
-     * TODO: Move these to configuration file later
+     * Get base pricing for tier levels from configuration.
+     * Prices are defined in application.properties (membership.pricing.*).
      */
     private BigDecimal getBasePriceForTier(Integer tierLevel) {
-        switch (tierLevel) {
-            case 1: return new BigDecimal("299"); // Silver
-            case 2: return new BigDecimal("499"); // Gold  
-            case 3: return new BigDecimal("799"); // Platinum
-            default: return new BigDecimal("299");
-        }
+        return switch (tierLevel) {
+            case 1 -> silverBasePrice;
+            case 2 -> goldBasePrice;
+            case 3 -> platinumBasePrice;
+            default -> silverBasePrice;
+        };
     }
     
     @Override
     @Transactional(readOnly = true)
+    @Cacheable("plans")
     public List<MembershipPlanDTO> getAllPlans() {
         return planRepository.findAll().stream()
             .map(this::convertPlanToDTO)
@@ -195,6 +258,7 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     @Transactional(readOnly = true)
+    @Cacheable("plans")
     public List<MembershipPlanDTO> getActivePlans() {
         return planRepository.findByIsActiveTrue().stream()
             .map(this::convertPlanToDTO)
@@ -203,6 +267,7 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "plansByTier", key = "#tierName.toUpperCase()")
     public List<MembershipPlanDTO> getPlansByTier(String tierName) {
         MembershipTier tier = tierRepository.findByName(tierName.toUpperCase())
             .orElseThrow(() -> MembershipException.tierNotFound(tierName));
@@ -225,6 +290,7 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "plansByType", key = "#type.name()")
     public List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type) {
         return planRepository.findByTypeAndIsActiveTrue(type).stream()
             .map(this::convertPlanToDTO)
@@ -239,23 +305,28 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     @Transactional(readOnly = true)
-    public List<MembershipTier> getAllTiers() {
-        return tierRepository.findAll();
+    @Cacheable("tiers")
+    public List<MembershipTierDTO> getAllTiers() {
+        return tierRepository.findAll().stream()
+            .map(tierMapper::toDTO)
+            .collect(Collectors.toList());
     }
     
     @Override
     @Transactional(readOnly = true)
-    public Optional<MembershipTier> getTierByName(String name) {
-        return tierRepository.findByName(name.toUpperCase());
+    @Cacheable(value = "tiers", key = "#name.toUpperCase()")
+    public Optional<MembershipTierDTO> getTierByName(String name) {
+        return tierRepository.findByName(name.toUpperCase()).map(tierMapper::toDTO);
     }
     
     @Override
     @Transactional(readOnly = true)
-    public Optional<MembershipTier> getTierById(Long id) {
-        return tierRepository.findById(id);
+    public Optional<MembershipTierDTO> getTierById(Long id) {
+        return tierRepository.findById(id).map(tierMapper::toDTO);
     }
     
     @Override
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public SubscriptionDTO createSubscription(SubscriptionRequestDTO request) {
         log.info("Creating subscription for user: {} with plan: {}", request.getUserId(), request.getPlanId());
         
@@ -522,6 +593,21 @@ public class MembershipServiceImpl implements MembershipService {
             .map(this::convertSubscriptionToDTO)
             .collect(Collectors.toList());
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<SubscriptionDTO> getAllSubscriptionsPaged(Pageable pageable) {
+        return subscriptionRepository.findAll(pageable)
+            .map(this::convertSubscriptionToDTO);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SubscriptionDTO getSubscriptionById(Long subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+            .orElseThrow(() -> new MembershipException("Subscription not found with id: " + subscriptionId, "SUBSCRIPTION_NOT_FOUND"));
+        return convertSubscriptionToDTO(subscription);
+    }
     
     @Override
     public SubscriptionDTO upgradeSubscription(Long subscriptionId, Long newPlanId) {
@@ -622,103 +708,134 @@ public class MembershipServiceImpl implements MembershipService {
         log.info("Processed {} subscription renewals", renewalSubscriptions.size());
     }
     
+    @Override
+    @Transactional(readOnly = true)
+    public UpgradePreviewDTO getUpgradePreview(Long subscriptionId, Long newPlanId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+            .orElseThrow(() -> MembershipException.subscriptionNotFound(subscriptionId));
+
+        MembershipPlan newPlan = planRepository.findById(newPlanId)
+            .orElseThrow(() -> MembershipException.planNotFound(newPlanId));
+
+        BigDecimal proRated = calculateProRatedAmount(subscription, subscription.getPlan(), newPlan);
+
+        return UpgradePreviewDTO.builder()
+            .subscriptionId(subscriptionId)
+            .currentPlanName(subscription.getPlan().getName())
+            .currentTier(subscription.getPlan().getTier().getName())
+            .currentPlanPrice(subscription.getPlan().getPrice())
+            .newPlanName(newPlan.getName())
+            .newTier(newPlan.getTier().getName())
+            .newPlanPrice(newPlan.getPrice())
+            .proRatedDifference(proRated)
+            .currency("INR")
+            .effectiveDate(LocalDateTime.now())
+            .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SystemHealthDTO getSystemHealth() {
+        long active    = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.ACTIVE);
+        long expired   = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.EXPIRED);
+        long cancelled = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.CANCELLED);
+        long users     = subscriptionRepository.countDistinctActiveUsers();
+
+        Map<String, Long> tierDist = new LinkedHashMap<>();
+        for (Object[] row : subscriptionRepository.countActiveByTier()) {
+            tierDist.put((String) row[0], (Long) row[1]);
+        }
+
+        return SystemHealthDTO.builder()
+            .status("UP")
+            .timestamp(LocalDateTime.now())
+            .version("1.0.0")
+            .metrics(SystemHealthDTO.MetricsDTO.builder()
+                .totalUsers(users)
+                .activeSubscriptions(active)
+                .expiredSubscriptions(expired)
+                .cancelledSubscriptions(cancelled)
+                .availablePlans(planRepository.findByIsActiveTrue().size())
+                .membershipTiers(3)
+                .tierDistribution(tierDist)
+                .build())
+            .system(SystemHealthDTO.SystemInfoDTO.builder()
+                .javaVersion(System.getProperty("java.version"))
+                .database("H2 In-Memory")
+                .environment("Development")
+                .build())
+            .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AnalyticsDTO getAnalytics() {
+        BigDecimal totalRevenue = subscriptionRepository.sumActiveRevenue();
+        long active = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.ACTIVE);
+        long total  = subscriptionRepository.count();
+
+        Map<String, Long> tierPop = new LinkedHashMap<>();
+        for (Object[] row : subscriptionRepository.countActiveByTier()) {
+            tierPop.put((String) row[0], (Long) row[1]);
+        }
+
+        Map<String, Long> planTypeDist = new LinkedHashMap<>();
+        for (Object[] row : subscriptionRepository.countActiveByPlanType()) {
+            planTypeDist.put(row[0].toString(), (Long) row[1]);
+        }
+
+        BigDecimal arpu = active == 0
+            ? BigDecimal.ZERO
+            : totalRevenue.divide(new BigDecimal(active), 2, RoundingMode.HALF_UP);
+
+        return AnalyticsDTO.builder()
+            .revenue(AnalyticsDTO.RevenueDTO.builder()
+                .totalRevenue(totalRevenue)
+                .currency("INR")
+                .averageRevenuePerUser(arpu)
+                .build())
+            .membership(AnalyticsDTO.MembershipMetricsDTO.builder()
+                .tierPopularity(tierPop)
+                .planTypeDistribution(planTypeDist)
+                .totalActivePlans(planRepository.findByIsActiveTrue().size())
+                .build())
+            .summary(AnalyticsDTO.SummaryDTO.builder()
+                .totalSubscriptions(total)
+                .activeSubscriptions(active)
+                .generatedAt(LocalDateTime.now())
+                .build())
+            .build();
+    }
+
     /**
-     * Convert MembershipPlan entity to DTO with benefits
-     * 
-     * This method does a lot of work - might need to optimize later.
-     * Combines plan data with tier benefits for API responses.
+     * Convert plan to DTO using MapStruct mapper, then set computed fields.
      */
     private MembershipPlanDTO convertPlanToDTO(MembershipPlan plan) {
+        MembershipPlanDTO dto = planMapper.toDTO(plan);
+
         BigDecimal monthlyPrice = plan.getMonthlyPrice();
+        dto.setMonthlyPrice(monthlyPrice);
+
         BigDecimal savings = BigDecimal.ZERO;
-        
-        // Calculate savings for quarterly and yearly plans
         if (plan.getType() != MembershipPlan.PlanType.MONTHLY) {
-            // Find monthly plan of same tier for comparison
             Optional<MembershipPlan> monthlyPlan = planRepository
                 .findByTierAndIsActiveTrue(plan.getTier())
                 .stream()
                 .filter(p -> p.getType() == MembershipPlan.PlanType.MONTHLY)
                 .findFirst();
-                
+
             if (monthlyPlan.isPresent()) {
                 savings = plan.calculateSavings(monthlyPlan.get().getPrice());
             }
         }
-        
-        return MembershipPlanDTO.builder()
-            .id(plan.getId())
-            .name(plan.getName())
-            .description(plan.getDescription())
-            .type(plan.getType())
-            .price(plan.getPrice())
-            .durationInMonths(plan.getDurationInMonths())
-            .tier(plan.getTier().getName())
-            .tierLevel(plan.getTier().getLevel())
-            .discountPercentage(plan.getTier().getDiscountPercentage())
-            .freeDelivery(plan.getTier().getFreeDelivery())
-            .exclusiveDeals(plan.getTier().getExclusiveDeals())
-            .earlyAccess(plan.getTier().getEarlyAccess())
-            .prioritySupport(plan.getTier().getPrioritySupport())
-            .maxCouponsPerMonth(plan.getTier().getMaxCouponsPerMonth())
-            .deliveryDays(plan.getTier().getDeliveryDays())
-            .additionalBenefits(plan.getTier().getAdditionalBenefits())
-            .monthlyPrice(monthlyPrice)
-            .savings(savings)
-            .isActive(plan.getIsActive())
-            .build();
+        dto.setSavings(savings);
+        return dto;
     }
-    
+
     /**
-     * Convert Subscription entity to DTO with all details
-     * 
-     * Enhanced with null safety for robust API testing
+     * Convert Subscription entity to DTO using MapStruct mapper.
      */
     private SubscriptionDTO convertSubscriptionToDTO(Subscription subscription) {
-        if (subscription == null) {
-            throw new MembershipException("Subscription cannot be null", "NULL_SUBSCRIPTION");
-        }
-        
-        if (subscription.getUser() == null) {
-            throw new MembershipException("Subscription must have a user", "NULL_USER");
-        }
-        
-        if (subscription.getPlan() == null) {
-            throw new MembershipException("Subscription must have a plan", "NULL_PLAN");
-        }
-        
-        if (subscription.getPlan().getTier() == null) {
-            throw new MembershipException("Plan must have a tier", "NULL_TIER");
-        }
-        
-        return SubscriptionDTO.builder()
-            .id(subscription.getId())
-            .userId(subscription.getUser().getId())
-            .userName(subscription.getUser().getName())
-            .userEmail(subscription.getUser().getEmail())
-            .planId(subscription.getPlan().getId())
-            .planName(subscription.getPlan().getName())
-            .planType(subscription.getPlan().getType().name())
-            .tier(subscription.getPlan().getTier().getName())
-            .tierLevel(subscription.getPlan().getTier().getLevel())
-            .paidAmount(subscription.getPaidAmount())
-            .status(subscription.getStatus())
-            .startDate(subscription.getStartDate())
-            .endDate(subscription.getEndDate())
-            .nextBillingDate(subscription.getNextBillingDate())
-            .autoRenewal(subscription.getAutoRenewal())
-            .daysRemaining(subscription.getDaysRemaining())
-            .isActive(subscription.isActive())
-            .cancelledAt(subscription.getCancelledAt())
-            .cancellationReason(subscription.getCancellationReason())
-            .discountPercentage(subscription.getPlan().getTier().getDiscountPercentage())
-            .freeDelivery(subscription.getPlan().getTier().getFreeDelivery())
-            .exclusiveDeals(subscription.getPlan().getTier().getExclusiveDeals())
-            .earlyAccess(subscription.getPlan().getTier().getEarlyAccess())
-            .prioritySupport(subscription.getPlan().getTier().getPrioritySupport())
-            .maxCouponsPerMonth(subscription.getPlan().getTier().getMaxCouponsPerMonth())
-            .deliveryDays(subscription.getPlan().getTier().getDeliveryDays())
-            .additionalBenefits(subscription.getPlan().getTier().getAdditionalBenefits())
-            .build();
+        return subscriptionMapper.toDTO(subscription);
     }
 }

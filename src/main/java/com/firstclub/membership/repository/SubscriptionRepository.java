@@ -2,6 +2,8 @@ package com.firstclub.membership.repository;
 
 import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -66,14 +68,47 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
     
     /**
      * Check if user has any active subscriptions
-     * 
-     * Used for validation before user deletion to prevent data integrity issues.
-     * 
-     * @param user the user to check
-     * @param currentTime current timestamp for checking validity
-     * @return true if user has active subscriptions
      */
     @Query("SELECT COUNT(s) > 0 FROM Subscription s WHERE s.user = :user " +
            "AND s.status = 'ACTIVE' AND s.endDate > :currentTime")
     boolean hasActiveSubscriptions(@Param("user") User user, @Param("currentTime") LocalDateTime currentTime);
+
+    /**
+     * Paginated query for all subscriptions - used by admin endpoints
+     */
+    Page<Subscription> findAll(Pageable pageable);
+
+    /**
+     * Count subscriptions by status — used by health/analytics endpoints
+     * to avoid loading entire table into memory.
+     */
+    @Query("SELECT COUNT(s) FROM Subscription s WHERE s.status = :status")
+    long countBySubscriptionStatus(@Param("status") Subscription.SubscriptionStatus status);
+
+    /**
+     * Count ACTIVE subscriptions grouped by tier name — for tier distribution analytics.
+     * Returns List of [tierName, count] Object arrays.
+     */
+    @Query("SELECT s.plan.tier.name, COUNT(s) FROM Subscription s " +
+           "WHERE s.status = 'ACTIVE' GROUP BY s.plan.tier.name")
+    List<Object[]> countActiveByTier();
+
+    /**
+     * Count ACTIVE subscriptions grouped by plan type — for plan type distribution analytics.
+     */
+    @Query("SELECT s.plan.type, COUNT(s) FROM Subscription s " +
+           "WHERE s.status = 'ACTIVE' GROUP BY s.plan.type")
+    List<Object[]> countActiveByPlanType();
+
+    /**
+     * Sum paidAmount for all ACTIVE subscriptions — total active revenue.
+     */
+    @Query("SELECT COALESCE(SUM(s.paidAmount), 0) FROM Subscription s WHERE s.status = 'ACTIVE'")
+    java.math.BigDecimal sumActiveRevenue();
+
+    /**
+     * Count distinct users who have at least one ACTIVE subscription.
+     */
+    @Query("SELECT COUNT(DISTINCT s.user.id) FROM Subscription s WHERE s.status = 'ACTIVE'")
+    long countDistinctActiveUsers();
 }

@@ -10,10 +10,16 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -30,6 +36,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
+@Validated
 @Slf4j
 @Tag(name = "User Management", description = "APIs for managing FirstClub users")
 public class UserController {
@@ -56,7 +63,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> getUserById(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long id) {
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long id) {
         return userService.getUserById(id)
             .map(user -> ResponseEntity.ok(user))
             .orElse(ResponseEntity.notFound().build());
@@ -76,11 +83,17 @@ public class UserController {
     }
     
     @GetMapping
-    @Operation(summary = "Get all users", description = "Retrieves all registered users")
+    @Operation(summary = "Get all users", description = "Retrieves registered users with optional pagination")
     @ApiResponse(responseCode = "200", description = "Users retrieved successfully")
-    public ResponseEntity<List<UserDTO>> getAllUsers() {
-        List<UserDTO> users = userService.getAllUsers();
-        log.debug("Retrieved {} users", users.size());
+    public ResponseEntity<Page<UserDTO>> getAllUsers(
+            @Parameter(description = "Page number (0-based)") @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size") @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "Sort by field") @RequestParam(defaultValue = "createdAt") String sort,
+            @Parameter(description = "Sort direction: asc or desc") @RequestParam(defaultValue = "desc") String direction) {
+        Sort.Direction sortDir = "asc".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortDir, sort));
+        Page<UserDTO> users = userService.getAllUsersPaged(pageable);
+        log.debug("Retrieved {} users (page {}/{})", users.getNumberOfElements(), page, users.getTotalPages());
         return ResponseEntity.ok(users);
     }
     
@@ -92,7 +105,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> updateUser(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long id,
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long id,
             @Valid @RequestBody UserDTO userDTO) {
         log.info("Updating user: {}", id);
         UserDTO updatedUser = userService.updateUser(id, userDTO);
@@ -107,7 +120,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> partialUpdateUser(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long id,
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long id,
             @RequestBody Map<String, Object> updates) {
         log.info("Partially updating user: {} with fields: {}", id, updates.keySet());
         
@@ -155,7 +168,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<Void> deleteUser(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long id) {
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long id) {
         log.info("Deleting user: {}", id);
         userService.deleteUser(id);
         return ResponseEntity.noContent().build();
@@ -173,7 +186,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found or no active subscription")
     })
     public ResponseEntity<SubscriptionDTO> getUserActiveSubscription(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId) {
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId) {
         // First verify user exists
         if (userService.getUserById(userId).isEmpty()) {
             log.warn("User not found for subscription query: {}", userId);
@@ -198,7 +211,7 @@ public class UserController {
     )
     @ApiResponse(responseCode = "200", description = "User subscriptions retrieved successfully")
     public ResponseEntity<List<SubscriptionDTO>> getUserSubscriptions(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId) {
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId) {
         // Verify user exists
         if (userService.getUserById(userId).isEmpty()) {
             log.warn("User not found for subscription history query: {}", userId);
@@ -221,7 +234,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User or plan not found")
     })
     public ResponseEntity<SubscriptionDTO> createUserSubscription(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId,
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId,
             @Valid @RequestBody SubscriptionRequestDTO request) {
         
         // Verify user exists
@@ -250,8 +263,8 @@ public class UserController {
         @ApiResponse(responseCode = "403", description = "Subscription doesn't belong to user")
     })
     public ResponseEntity<SubscriptionDTO> updateUserSubscription(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId,
-            @Parameter(description = "Subscription ID", example = "1") @PathVariable Long subscriptionId,
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId,
+            @Parameter(description = "Subscription ID", example = "1") @Positive @PathVariable Long subscriptionId,
             @Valid @RequestBody SubscriptionUpdateDTO updateDTO) {
         
         // Verify user exists
@@ -287,9 +300,9 @@ public class UserController {
         @ApiResponse(responseCode = "403", description = "Subscription doesn't belong to user")
     })
     public ResponseEntity<SubscriptionDTO> upgradeUserSubscription(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId,
-            @Parameter(description = "Subscription ID", example = "1") @PathVariable Long subscriptionId,
-            @Parameter(description = "New Plan ID", example = "4") @PathVariable Long newPlanId) {
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId,
+            @Parameter(description = "Subscription ID", example = "1") @Positive @PathVariable Long subscriptionId,
+            @Parameter(description = "New Plan ID", example = "4") @Positive @PathVariable Long newPlanId) {
         
         // Verify user exists
         if (userService.getUserById(userId).isEmpty()) {
@@ -324,8 +337,8 @@ public class UserController {
         @ApiResponse(responseCode = "403", description = "Subscription doesn't belong to user")
     })
     public ResponseEntity<SubscriptionDTO> cancelUserSubscription(
-            @Parameter(description = "User ID", example = "1") @PathVariable Long userId,
-            @Parameter(description = "Subscription ID", example = "1") @PathVariable Long subscriptionId,
+            @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long userId,
+            @Parameter(description = "Subscription ID", example = "1") @Positive @PathVariable Long subscriptionId,
             @RequestBody(required = false) java.util.Map<String, String> request) {
         
         // Verify user exists and subscription belongs to them
