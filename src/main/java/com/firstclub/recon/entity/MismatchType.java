@@ -12,5 +12,10 @@ public enum MismatchType {
     // Layer 3 – ledger vs settlement batch
     LEDGER_BATCH_VARIANCE,
     // Layer 4 – settlement batch vs external statement
-    BATCH_STATEMENT_VARIANCE
+    BATCH_STATEMENT_VARIANCE,
+    // Phase 14 – gateway taxonomy
+    /** Gateway confirmed a payment but no local invoice record exists. Critical. */
+    ORPHAN_GATEWAY_PAYMENT,
+    /** More than one settlement batch exists for the same merchant+date. Critical. */
+    DUPLICATE_SETTLEMENT
 }

@@ -290,3 +290,180 @@ When `integrityViolationCount > 0`, the `overallStatus` is set to `DEGRADED`.
 `GET /api/v2/admin/system/summary` returns `reconMismatchOpenCount` alongside all other
 operational counters. Use this as the primary dashboard metric for recon health,
 complementing the deep health status indicator.
+
+---
+
+## Phase 14 — Mismatch Taxonomy and Timing-Window Handling
+
+### The Timing-Window Problem
+
+Nightly reconciliation runs at 02:10 UTC and compares invoices and payments for the **previous
+calendar day**.  A payment captured at 23:58 local time may not reach the gateway settlement
+report until 00:02 the following day — a 4-minute slip that would produce a spurious
+`INVOICE_NO_PAYMENT` mismatch without any real revenue loss.
+
+Phase 14 introduces a configurable **timing window** that extends the comparison range by
+`recon.window.minutes` (default: 30) on both sides of each day boundary.  Mismatches whose
+timestamp falls inside this margin receive an `expectation` of `EXPECTED_TIMING_DIFFERENCE`
+and are classified as `WARNING` rather than `CRITICAL`.
+
+#### Configuring the Timing Window
+
+In `application.properties`:
+
+```properties
+# Extend reconciliation window 45 minutes around each day boundary (default: 30)
+recon.window.minutes=45
+```
+
+Set to `0` to use exact calendar-day boundaries with no slack.
+
+---
+
+### Expected vs Unexpected Mismatches
+
+Every `ReconMismatch` now carries two new fields populated by `ReconExpectationClassifier`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `expectation` | `ReconExpectation` | Why the mismatch occurred |
+| `severity` | `ReconSeverity` | How urgently it needs attention |
+
+#### `ReconExpectation` Taxonomy
+
+| Value | Description |
+|---|---|
+| `EXPECTED_TIMING_DIFFERENCE` | Timestamp falls in the day-boundary window — likely a settlement timing slip |
+| `EXPECTED_RISK_HOLD` | Payment is held by risk/compliance; settlement has not yet cleared |
+| `EXPECTED_DISPUTE_HOLD` | Active chargeback dispute; settlement is intentionally withheld |
+| `UNEXPECTED_SYSTEM_ERROR` | System logic bug — should never produce this mismatch |
+| `UNEXPECTED_GATEWAY_ERROR` | Gateway sent inconsistent or duplicate data |
+
+#### `ReconSeverity` Levels
+
+| Value | SLA | Response |
+|---|---|---|
+| `INFO` | 7 days | Monitor; low probability of revenue impact |
+| `WARNING` | 3 days | Investigate; possible but unlikely revenue impact |
+| `CRITICAL` | Same business day | Immediate action required; direct revenue impact |
+
+---
+
+### Why the Gateway Transaction ID is the Reconciliation Anchor
+
+Prior to Phase 14, reconciliation matched invoices to payments.  The fatal gap: a payment
+can reach the gateway and be **charged to the customer** before an invoice is created (or if
+invoice creation fails after the charge).  In that scenario, invoice-centric reconciliation
+produces no mismatch at all — real money was taken with no record in the billing system.
+
+`gateway_transaction_id` (set by the gateway on a successful charge) is now the **primary
+reconciliation anchor**.  The `OrphanGatewayPaymentChecker` scans for:
+
+- `PaymentAttempt.status = SUCCEEDED`
+- `PaymentAttempt.gatewayTransactionId IS NOT NULL`
+- `PaymentIntent.invoiceId IS NULL`
+
+Any such attempt generates an `ORPHAN_GATEWAY_PAYMENT` / `CRITICAL` mismatch immediately.
+
+---
+
+### New Mismatch Types (Phase 14)
+
+#### `ORPHAN_GATEWAY_PAYMENT`
+
+**Meaning:** A succeeded payment attempt has a gateway transaction ID but the intent has no
+linked invoice.  Money was received; the billing system has no record.
+
+**Investigation:**
+```sql
+SELECT pa.id          AS attempt_id,
+       pa.gateway_transaction_id,
+       pi.id          AS intent_id,
+       pi.invoice_id,
+       pa.created_at
+FROM payment_attempts_v2 pa
+JOIN payment_intents_v2  pi ON pi.id = pa.intent_id
+WHERE pa.status = 'SUCCEEDED'
+  AND pa.gateway_transaction_id IS NOT NULL
+  AND pi.invoice_id IS NULL;
+```
+
+**Resolution:** Engineering must link the intent to an invoice manually, or issue a refund
+via the gateway if the charge was erroneous.  Escalate on the same business day.
+
+#### `DUPLICATE_SETTLEMENT`
+
+**Meaning:** More than one `SettlementBatch` exists for the same `(merchant_id, batch_date)`
+pair.  A double-payout to the merchant may have occurred.
+
+**Investigation:**
+```sql
+SELECT merchant_id, batch_date, COUNT(*) AS batch_count, SUM(gross_amount) AS total_settled
+FROM settlement_batches
+WHERE batch_date = :date
+GROUP BY merchant_id, batch_date
+HAVING COUNT(*) > 1;
+```
+
+**Resolution:** Halt further settlement for the affected merchant.  Identify the duplicate
+batch, reverse it with the bank, and reconcile ledger entries.  Escalate to finance lead
+and engineering immediately.
+
+---
+
+### Phase 14 API Reference
+
+#### Window-Aware Reconciliation Run
+
+```
+POST /api/v2/admin/recon/run?date=2026-03-09
+```
+
+Runs full 4-layer reconciliation for `date` using the configured timing window.  Returns
+the list of `ReconMismatchDTO` records created during the run, each annotated with
+`expectation` and `severity`.
+
+Response (200):
+```json
+[
+  {
+    "id": 42,
+    "type": "INVOICE_NO_PAYMENT",
+    "expectation": "EXPECTED_TIMING_DIFFERENCE",
+    "severity": "WARNING",
+    "status": "OPEN",
+    ...
+  }
+]
+```
+
+#### Orphaned Gateway Payments
+
+```
+GET /api/v2/admin/recon/orphaned-gateway-payments
+```
+
+Returns all existing `ORPHAN_GATEWAY_PAYMENT` mismatches ordered by creation date descending.
+Use this as a standing check during daily ops review.
+
+#### Mismatch Management (unchanged paths)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v2/admin/recon/mismatches` | List all mismatches |
+| `POST` | `/api/v2/admin/recon/mismatches/{id}/acknowledge` | Acknowledge a mismatch |
+| `POST` | `/api/v2/admin/recon/mismatches/{id}/resolve` | Resolve with a note |
+
+---
+
+### Updated Escalation Ladder (Phase 14)
+
+Escalate to engineering **immediately** (same business day) if:
+
+- Any `ORPHAN_GATEWAY_PAYMENT` mismatch is open — customer charged with no invoice
+- Any `DUPLICATE_SETTLEMENT` mismatch is open — potential double-payout to merchant
+- Any `CRITICAL` mismatch is older than 4 hours and still `OPEN`
+
+`WARNING` mismatches with `expectation = EXPECTED_TIMING_DIFFERENCE` may be monitored for
+24 hours before escalation; they typically auto-resolve after the lagging gateway settlement
+report arrives.

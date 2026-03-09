@@ -1,5 +1,6 @@
 package com.firstclub.recon.repository;
 
+import com.firstclub.recon.entity.MismatchType;
 import com.firstclub.recon.entity.ReconMismatch;
 import com.firstclub.recon.entity.ReconMismatchStatus;
 import org.springframework.data.domain.Page;
@@ -20,4 +21,7 @@ public interface ReconMismatchRepository extends JpaRepository<ReconMismatch, Lo
 
     /** Platform-wide count by status — used by deep health checks. */
     long countByStatus(ReconMismatchStatus status);
+
+    // Phase 14: type-based lookup for orphan and duplicate taxonomy endpoints
+    List<ReconMismatch> findByTypeOrderByCreatedAtDesc(MismatchType type);
 }

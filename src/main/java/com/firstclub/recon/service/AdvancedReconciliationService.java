@@ -3,8 +3,13 @@ package com.firstclub.recon.service;
 import com.firstclub.payments.entity.Payment;
 import com.firstclub.payments.entity.PaymentStatus;
 import com.firstclub.payments.repository.PaymentRepository;
+import com.firstclub.recon.ReconWindowPolicy;
+import com.firstclub.recon.classification.ReconExpectationClassifier;
+import com.firstclub.recon.classification.ReconExpectationClassifier.ClassificationResult;
 import com.firstclub.recon.dto.ReconMismatchDTO;
 import com.firstclub.recon.entity.*;
+import com.firstclub.recon.gateway.OrphanGatewayPaymentChecker;
+import com.firstclub.recon.mismatch.DuplicateSettlementChecker;
 import com.firstclub.recon.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +33,9 @@ import java.util.List;
  *   <li>Settlement batch net vs imported external statement total (Layer 4)</li>
  * </ol>
  * Mismatches created here are linked to an existing {@link ReconReport} row.
+ *
+ * <p>Phase 14 additions: taxonomy-aware run with timing-window classification,
+ * orphaned gateway payment detection, and duplicate settlement detection.
  */
 @Slf4j
 @Service
@@ -42,6 +50,113 @@ public class AdvancedReconciliationService {
     private final ExternalStatementImportRepository importRepository;
     private final ReconMismatchRepository       mismatchRepository;
     private final ReconReportRepository         reportRepository;
+    // Phase 14 beans
+    private final ReconWindowPolicy             windowPolicy;
+    private final ReconExpectationClassifier    classifier;
+    private final OrphanGatewayPaymentChecker   orphanChecker;
+    private final DuplicateSettlementChecker    dupSettlementChecker;
+
+    // ---------------------------------------------------------------
+    // Phase 14: Taxonomy-aware full reconciliation run
+    // ---------------------------------------------------------------
+
+    /**
+     * Runs a full taxonomy-aware reconciliation pass for {@code date}.
+     *
+     * <p>Steps performed:
+     * <ol>
+     *   <li>Ensure a {@link ReconReport} exists for the date; create one if not.</li>
+     *   <li>Run Layer-2 (payment vs ledger) reconciliation with timing-window classification.</li>
+     *   <li>Detect orphaned gateway payments.</li>
+     *   <li>Detect duplicate settlement batches.</li>
+     * </ol>
+     *
+     * @return list of all mismatches produced (classified with expectation + severity)
+     */
+    @Transactional
+    public List<ReconMismatchDTO> runForDateWithWindow(LocalDate date) {
+        ReconReport report = reportRepository.findByReportDate(date)
+                .orElseGet(() -> reportRepository.save(ReconReport.builder()
+                        .reportDate(date)
+                        .expectedTotal(BigDecimal.ZERO)
+                        .actualTotal(BigDecimal.ZERO)
+                        .mismatchCount(0)
+                        .build()));
+
+        ReconWindowPolicy.ReconWindow window = windowPolicy.windowFor(date);
+        log.info("Running taxonomy-aware recon for date={} window=[{},{}]",
+                date, window.extendedStart(), window.extendedEnd());
+
+        List<ReconMismatch> all = new ArrayList<>();
+
+        // Layer 2 with window-aware classification
+        all.addAll(reconcilePaymentToLedgerWithWindow(date, report.getId(), window));
+        // Orphan gateway payment check
+        all.addAll(orphanChecker.check(report.getId()));
+        // Duplicate settlement check
+        all.addAll(dupSettlementChecker.check(date, report.getId()));
+
+        log.info("Taxonomy-aware recon complete: date={} totalMismatches={}", date, all.size());
+        return all.stream().map(ReconMismatchDTO::from).toList();
+    }
+
+    /**
+     * Returns all mismatches whose {@code gateway_transaction_id} is non-null
+     * and whose type is {@link MismatchType#ORPHAN_GATEWAY_PAYMENT}.
+     * Used by the GET /orphaned-gateway-payments endpoint.
+     */
+    @Transactional(readOnly = true)
+    public List<ReconMismatchDTO> listOrphanedGatewayPayments() {
+        return mismatchRepository
+                .findByTypeOrderByCreatedAtDesc(MismatchType.ORPHAN_GATEWAY_PAYMENT)
+                .stream()
+                .map(ReconMismatchDTO::from)
+                .toList();
+    }
+
+    // ── Internal ─────────────────────────────────────────────────────────────
+
+    private List<ReconMismatch> reconcilePaymentToLedgerWithWindow(
+            LocalDate date, Long reportId, ReconWindowPolicy.ReconWindow window) {
+
+        LocalDateTime start = window.extendedStart();
+        LocalDateTime end   = window.extendedEnd();
+
+        BigDecimal paymentTotal = paymentRepository
+                .findByStatusAndCapturedAtBetween(PaymentStatus.CAPTURED, start, end)
+                .stream()
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal settlementTotal = settlementRepository
+                .findBySettlementDate(date)
+                .map(Settlement::getTotalAmount)
+                .orElse(BigDecimal.ZERO);
+
+        List<ReconMismatch> created = new ArrayList<>();
+        if (paymentTotal.subtract(settlementTotal).abs().compareTo(TOLERANCE) > 0) {
+            // Determine whether the discrepancy is within the timing margin
+            boolean nearBoundary = !paymentTotal.equals(BigDecimal.ZERO)
+                    && windowPolicy.isNearBoundary(date, start);
+            ClassificationResult cr = classifier.classify(
+                    MismatchType.PAYMENT_LEDGER_VARIANCE, nearBoundary);
+
+            String details = String.format(
+                    "Payment gross %s differs from ledger settlement %s (date=%s, delta=%s, window=%d min)",
+                    paymentTotal, settlementTotal, date,
+                    paymentTotal.subtract(settlementTotal), windowPolicy.getWindowMinutes());
+
+            ReconMismatch m = mismatchRepository.save(ReconMismatch.builder()
+                    .reportId(reportId)
+                    .type(MismatchType.PAYMENT_LEDGER_VARIANCE)
+                    .expectation(cr.expectation())
+                    .severity(cr.severity())
+                    .details(details)
+                    .build());
+            created.add(m);
+        }
+        return created;
+    }
 
     // ---------------------------------------------------------------
     // Layer 2: captured payment total vs ledger settlement total

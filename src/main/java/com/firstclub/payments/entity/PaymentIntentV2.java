@@ -149,6 +149,37 @@ public class PaymentIntentV2 {
     @Column(name = "reconciliation_state", length = 32)
     private String reconciliationState;
 
+    // ── Phase 14: Settlement / FX fields ─────────────────────────────────────
+
+    /**
+     * ISO-4217 currency code in which the merchant receives settlement.
+     * May differ from {@link #currency} in cross-border payment scenarios.
+     */
+    @Column(name = "settlement_currency", length = 3)
+    private String settlementCurrency;
+
+    /**
+     * Settlement amount expressed in the smallest denomination of
+     * {@link #settlementCurrency} (e.g. paisa, cents).
+     */
+    @Column(name = "settlement_amount_minor")
+    private Long settlementAmountMinor;
+
+    /**
+     * Exchange rate applied at settlement: 1 unit of {@link #currency}
+     * equals {@code fxRate} units of {@link #settlementCurrency}.
+     * Null for domestic (same-currency) payments.
+     */
+    @Column(name = "fx_rate", precision = 18, scale = 8)
+    private java.math.BigDecimal fxRate;
+
+    /**
+     * Timestamp at which the FX rate was locked by the gateway.
+     * Null for domestic payments or when not yet settled.
+     */
+    @Column(name = "fx_rate_captured_at")
+    private LocalDateTime fxRateCapturedAt;
+
     // ── Associations ─────────────────────────────────────────────────────────
 
     @OneToMany(mappedBy = "paymentIntent", cascade = CascadeType.ALL, fetch = FetchType.LAZY)

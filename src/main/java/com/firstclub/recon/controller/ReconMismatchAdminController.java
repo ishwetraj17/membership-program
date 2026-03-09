@@ -10,22 +10,27 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/v2/admin/recon/mismatches")
+@RequestMapping("/api/v2/admin/recon")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
-@Tag(name = "Recon Mismatches", description = "Mismatch lifecycle management")
+@Tag(name = "Recon Mismatches", description = "Mismatch lifecycle management and taxonomy-aware recon runs")
 public class ReconMismatchAdminController {
 
     private final AdvancedReconciliationService service;
 
-    @GetMapping
+    // ── Mismatch listing ──────────────────────────────────────────────────────
+
+    @GetMapping("/mismatches")
     @Operation(summary = "List mismatches, optionally filtered by status")
     public ResponseEntity<Page<ReconMismatchDTO>> listMismatches(
             @RequestParam(required = false) ReconMismatchStatus status,
@@ -33,7 +38,9 @@ public class ReconMismatchAdminController {
         return ResponseEntity.ok(service.listMismatches(status, pageable));
     }
 
-    @PostMapping("/{mismatchId}/acknowledge")
+    // ── Mismatch lifecycle ────────────────────────────────────────────────────
+
+    @PostMapping("/mismatches/{mismatchId}/acknowledge")
     @Operation(summary = "Acknowledge a mismatch and assign an owner")
     public ResponseEntity<ReconMismatchDTO> acknowledge(
             @PathVariable Long mismatchId,
@@ -42,7 +49,7 @@ public class ReconMismatchAdminController {
         return ResponseEntity.ok(service.acknowledgeMismatch(mismatchId, ownerUserId));
     }
 
-    @PostMapping("/{mismatchId}/resolve")
+    @PostMapping("/mismatches/{mismatchId}/resolve")
     @Operation(summary = "Mark a mismatch as resolved with a resolution note")
     public ResponseEntity<ReconMismatchDTO> resolve(
             @PathVariable Long mismatchId,
@@ -50,12 +57,43 @@ public class ReconMismatchAdminController {
         return ResponseEntity.ok(service.resolveMismatch(mismatchId, req.getResolutionNote(), req.getOwnerUserId()));
     }
 
-    @PostMapping("/{mismatchId}/ignore")
+    @PostMapping("/mismatches/{mismatchId}/ignore")
     @Operation(summary = "Ignore a mismatch with a reason")
     public ResponseEntity<ReconMismatchDTO> ignore(
             @PathVariable Long mismatchId,
             @RequestBody Map<String, String> body) {
         String reason = body.getOrDefault("reason", "");
         return ResponseEntity.ok(service.ignoreMismatch(mismatchId, reason));
+    }
+
+    // ── Phase 14: Taxonomy-aware run and specialist queries ───────────────────
+
+    /**
+     * Trigger a full taxonomy-aware reconciliation run for {@code date}.
+     *
+     * <p>This run uses the configurable timing window (default 30 min) to avoid
+     * false positives at day boundaries, and classifies each mismatch with an
+     * {@link com.firstclub.recon.classification.ReconExpectation} and
+     * {@link com.firstclub.recon.classification.ReconSeverity}.
+     */
+    @PostMapping("/run")
+    @Operation(summary = "Trigger taxonomy-aware reconciliation run for a date")
+    public ResponseEntity<List<ReconMismatchDTO>> run(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        List<ReconMismatchDTO> results = service.runForDateWithWindow(date);
+        return ResponseEntity.ok(results);
+    }
+
+    /**
+     * Returns all mismatches classified as
+     * {@link com.firstclub.recon.entity.MismatchType#ORPHAN_GATEWAY_PAYMENT}.
+     *
+     * <p>These represent gateway transactions where real funds were received
+     * but no invoice exists in the billing system — a critical data-integrity gap.
+     */
+    @GetMapping("/orphaned-gateway-payments")
+    @Operation(summary = "List all orphaned gateway payment mismatches")
+    public ResponseEntity<List<ReconMismatchDTO>> listOrphanedGatewayPayments() {
+        return ResponseEntity.ok(service.listOrphanedGatewayPayments());
     }
 }

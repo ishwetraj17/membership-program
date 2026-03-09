@@ -63,4 +63,21 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
      * Used to enforce the exactly-one-successful-attempt invariant.
      */
     int countByPaymentIntentIdAndStatus(Long paymentIntentId, PaymentAttemptStatus status);
+
+    // ── Phase 14: Orphan gateway payment detection ────────────────────────────
+
+    /**
+     * Returns all SUCCEEDED attempts where:
+     * <ul>
+     *   <li>A {@code gateway_transaction_id} is set (gateway confirmed the charge).</li>
+     *   <li>The linked {@code PaymentIntentV2.invoiceId} is {@code null} (no billing anchor).</li>
+     * </ul>
+     * These are "orphaned" gateway payments: money received by the gateway but
+     * not tied to any invoice in the FirstClub billing system.
+     */
+    @Query("SELECT a FROM PaymentAttempt a " +
+           "WHERE a.status = com.firstclub.payments.entity.PaymentAttemptStatus.SUCCEEDED " +
+           "AND a.gatewayTransactionId IS NOT NULL " +
+           "AND a.paymentIntent.invoiceId IS NULL")
+    List<PaymentAttempt> findSucceededWithGatewayTxnAndNoInvoice();
 }
