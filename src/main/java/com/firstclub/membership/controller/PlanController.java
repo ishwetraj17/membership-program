@@ -110,23 +110,6 @@ public class PlanController {
         return ResponseEntity.ok(plans);
     }
     
-    @GetMapping("/type/{type}")
-    @Operation(
-        summary = "Get plans by type", 
-        description = "Get all tier options (Silver/Gold/Platinum) for a specific plan type (alias for /duration)"
-    )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "Plans for type retrieved successfully"),
-        @ApiResponse(responseCode = "400", description = "Invalid plan type")
-    })
-    public ResponseEntity<List<MembershipPlanDTO>> getPlansByType(
-            @Parameter(description = "Plan type", example = "MONTHLY") 
-            @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
-        log.info("Retrieved {} tier options for plan type: {}", plans.size(), type);
-        return ResponseEntity.ok(plans);
-    }
-    
     @GetMapping("/{id}")
     @Operation(
         summary = "Get detailed plan information", 

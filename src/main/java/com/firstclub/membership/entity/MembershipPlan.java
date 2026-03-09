@@ -1,10 +1,7 @@
 package com.firstclub.membership.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -23,6 +20,7 @@ import java.util.List;
 @Entity
 @Table(name = "membership_plans")
 @Data
+@EqualsAndHashCode(of = "id")
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -55,10 +53,12 @@ public class MembershipPlan {
     // Each plan belongs to a tier
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tier_id", nullable = false)
+    @ToString.Exclude
     private MembershipTier tier;
 
     // Plans can have multiple subscriptions
     @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @ToString.Exclude
     private List<Subscription> subscriptions;
 
     /**
@@ -68,6 +68,23 @@ public class MembershipPlan {
         MONTHLY,
         QUARTERLY,
         YEARLY
+    }
+
+    /**
+     * Enforce data invariants before any INSERT or UPDATE.
+     * Catches bad data at persistence time regardless of where the object was built.
+     */
+    @PrePersist
+    @PreUpdate
+    private void validateBeforePersist() {
+        if (durationInMonths == null || durationInMonths <= 0) {
+            throw new IllegalArgumentException(
+                "MembershipPlan.durationInMonths must be a positive integer (got: " + durationInMonths + ")");
+        }
+        if (price == null || price.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException(
+                "MembershipPlan.price must be positive (got: " + price + ")");
+        }
     }
 
     /**

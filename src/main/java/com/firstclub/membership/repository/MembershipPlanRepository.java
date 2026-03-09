@@ -3,6 +3,7 @@ package com.firstclub.membership.repository;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.MembershipTier;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -39,4 +40,10 @@ public interface MembershipPlanRepository extends JpaRepository<MembershipPlan, 
      * @return List of active plans of the specified type
      */
     List<MembershipPlan> findByTypeAndIsActiveTrue(MembershipPlan.PlanType type);
+
+    /**
+     * Count active plans without loading all records into memory.
+     */
+    @Query("SELECT COUNT(p) FROM MembershipPlan p WHERE p.isActive = true")
+    long countActivePlans();
 }

@@ -22,7 +22,9 @@ import java.time.LocalDateTime;
 public class SubscriptionHistory {
 
     public enum EventType {
-        CREATED, UPGRADED, DOWNGRADED, CANCELLED, RENEWED, SUSPENDED, EXPIRED
+        CREATED, UPGRADED, DOWNGRADED, CANCELLED, RENEWED, SUSPENDED, EXPIRED,
+        /** Payment received — subscription transitioned from PENDING to ACTIVE. */
+        PAYMENT_SUCCEEDED
     }
 
     @Id

@@ -3,6 +3,7 @@ package com.firstclub.membership.config;
 import com.firstclub.membership.security.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -36,9 +37,14 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final UserDetailsService userDetailsService;
 
+    /** True only when spring.h2.console.enabled=true (dev profile). */
+    @Value("${spring.h2.console.enabled:false}")
+    private boolean h2ConsoleEnabled;
+
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        // Work factor 12 per OWASP 2025 recommendation (default 10 is underpowered)
+        return new BCryptPasswordEncoder(12);
     }
 
     @Bean
@@ -69,6 +75,11 @@ public class SecurityConfig {
                 // Plan and tier catalogue is read-only public information
                 .requestMatchers(HttpMethod.GET, "/api/v1/membership/plans/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/membership/tiers/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/plans/**").permitAll()
+                // Fake gateway emulator (dev/test only — remove in production)
+                .requestMatchers("/gateway/**").permitAll()
+                // Inbound webhook callbacks from payment gateway (signed with HMAC)
+                .requestMatchers("/api/v1/webhooks/**").permitAll()
                 // Swagger UI and OpenAPI docs
                 .requestMatchers(
                     "/swagger-ui/**",
@@ -76,10 +87,13 @@ public class SecurityConfig {
                     "/v3/api-docs/**",
                     "/v3/api-docs"
                 ).permitAll()
-                // H2 console (disable in prod via profile)
-                .requestMatchers("/h2-console/**").permitAll()
-                // Actuator health
+                // H2 console — only when explicitly enabled (dev profile)
+                .requestMatchers("/h2-console/**").access(
+                    (authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(h2ConsoleEnabled)
+                )
+                // Actuator health endpoint is public; all other actuator endpoints require admin
                 .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/actuator/**").hasRole("ADMIN")
                 // Everything else requires authentication
                 .anyRequest().authenticated()
             )

@@ -1,12 +1,10 @@
 package com.firstclub.membership.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import com.firstclub.platform.crypto.EncryptedStringConverter;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -26,6 +24,7 @@ import java.util.Set;
     @Index(name = "idx_user_email", columnList = "email")
 })
 @Data
+@EqualsAndHashCode(of = "id")
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -43,7 +42,7 @@ public class User {
     private String password;
 
     // Roles: ROLE_USER, ROLE_ADMIN
-    @ElementCollection(fetch = FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "role")
     @Builder.Default
@@ -53,9 +52,13 @@ public class User {
     private String name;
 
     // Indian phone number format - 10 digits starting with 6-9
+    // Stored as AES-256-GCM ciphertext (see EncryptedStringConverter)
+    @Convert(converter = EncryptedStringConverter.class)
     @Column(nullable = false)
     private String phoneNumber;
 
+    // Stored as AES-256-GCM ciphertext (see EncryptedStringConverter)
+    @Convert(converter = EncryptedStringConverter.class)
     @Column(nullable = false)
     private String address;
 
@@ -80,6 +83,7 @@ public class User {
 
     // One user can have multiple subscriptions over time
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @ToString.Exclude
     private List<Subscription> subscriptions;
 
     @CreationTimestamp

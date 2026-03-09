@@ -1,0 +1,29 @@
+package com.firstclub.dunning.scheduler;
+
+import com.firstclub.dunning.service.DunningService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/**
+ * Scheduled job that processes due dunning attempts.
+ *
+ * <p>Runs every 10 minutes.  For each {@code SCHEDULED} attempt whose
+ * {@code scheduled_at} has elapsed it re-attempts the payment.  A successful
+ * retry reactivates the subscription; a final failure suspends it.
+ */
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class DunningScheduler {
+
+    private final DunningService dunningService;
+
+    /** Every 10 minutes; initial delay 90 s. */
+    @Scheduled(fixedRate = 600_000, initialDelay = 90_000)
+    public void runDunning() {
+        log.debug("Dunning scheduler: checking for due attempts");
+        dunningService.processDueAttempts();
+    }
+}

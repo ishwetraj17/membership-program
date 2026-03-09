@@ -3,7 +3,8 @@ package com.firstclub.membership;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.Subscription;
-import com.firstclub.membership.exception.MembershipException;import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.PlanService;
 import com.firstclub.membership.service.TierService;
 import com.firstclub.membership.service.UserService;
@@ -12,15 +13,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
-import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -36,14 +38,13 @@ import static org.assertj.core.api.Assertions.*;
  * 
  * @author Shwet Raj
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = {
-    "spring.jpa.hibernate.ddl-auto=create-drop",
-    "spring.datasource.url=jdbc:h2:mem:testdb",
-    "logging.level.org.hibernate.SQL=WARN"
-})
 @DisplayName("FirstClub Membership Program - Integration Tests")
-class MembershipApplicationTests {
+class MembershipApplicationTests extends PostgresIntegrationTestBase {
+
+    /** Pre-seeded admin account credentials — kept as constants so a single change
+     *  propagates everywhere in this test class. */
+    private static final String ADMIN_EMAIL    = "admin@firstclub.com";
+    private static final String ADMIN_PASSWORD = "Admin@firstclub1";
 
     @Autowired
     private MembershipService membershipService;
@@ -362,7 +363,7 @@ class MembershipApplicationTests {
             
             SubscriptionDTO subscription = membershipService.createSubscription(request);
 
-            List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptions(createdUser.getId());
+            List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptionsPaged(createdUser.getId(), Pageable.unpaged()).getContent();
 
             assertThat(userSubscriptions).isNotEmpty();
             assertThat(userSubscriptions).hasSize(1);
@@ -412,7 +413,7 @@ class MembershipApplicationTests {
         void shouldHandleUserNotFoundException() {
             Long nonExistentUserId = 99999L;
 
-            assertThatThrownBy(() -> membershipService.getUserSubscriptions(nonExistentUserId))
+            assertThatThrownBy(() -> membershipService.getUserSubscriptionsPaged(nonExistentUserId, Pageable.unpaged()))
                 .isInstanceOf(MembershipException.class)
                 .hasMessageContaining("not found");
         }
@@ -592,8 +593,8 @@ class MembershipApplicationTests {
         void obtainAuthToken() {
             // Log in as the pre-seeded admin user (created during application init)
             LoginRequestDTO loginRequest = LoginRequestDTO.builder()
-                .email("admin@firstclub.com")
-                .password("Admin@firstclub1")
+                .email(ADMIN_EMAIL)
+                .password(ADMIN_PASSWORD)
                 .build();
 
             ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
@@ -979,6 +980,263 @@ class MembershipApplicationTests {
             );
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody().getId()).isEqualTo(ownUserId);
+        }
+
+        private HttpHeaders jsonHeaders() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            return headers;
+        }
+
+        @Test
+        @DisplayName("Blacklisted token should be rejected with 401 after logout")
+        void blacklistedTokenShouldBeRejected() {
+            // Register a new user and capture the access token
+            UserDTO registerRequest = UserDTO.builder()
+                .name("Logout Test User")
+                .email(generateUniqueEmail("logouttest"))
+                .phoneNumber("9000000099")
+                .address("9 Logout Lane")
+                .city("Chennai")
+                .state("Tamil Nadu")
+                .pincode("600001")
+                .password("Logout@test1")
+                .build();
+            ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(authResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            String accessToken = authResponse.getBody().getToken();
+            Long userId = authResponse.getBody().getUserId();
+
+            // Confirm the token works before logout
+            HttpHeaders bearerHeaders = new HttpHeaders();
+            bearerHeaders.setBearerAuth(accessToken);
+            ResponseEntity<UserDTO> beforeLogout = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users/" + userId,
+                HttpMethod.GET,
+                new HttpEntity<>(bearerHeaders),
+                UserDTO.class
+            );
+            assertThat(beforeLogout.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            // Logout — should blacklist the token
+            ResponseEntity<Map<String, Object>> logoutResponse = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/auth/logout",
+                HttpMethod.POST,
+                new HttpEntity<>(bearerHeaders),
+                new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            assertThat(logoutResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            // The same token must now return 401
+            ResponseEntity<String> afterLogout = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users/" + userId,
+                HttpMethod.GET,
+                new HttpEntity<>(bearerHeaders),
+                String.class
+            );
+            assertThat(afterLogout.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+    }
+
+    // ========================================
+    // ERROR HANDLING EDGE-CASE TESTS
+    // ========================================
+
+    @Nested
+    @DisplayName("Error Handling Edge Cases")
+    class ErrorHandlingEdgeCaseTests {
+
+        @Test
+        @DisplayName("Duplicate email registration should return 409 Conflict")
+        void shouldReturn409OnDuplicateEmailRegistration() {
+            String email = generateUniqueEmail("dupuser");
+            UserDTO registerRequest = UserDTO.builder()
+                .name("First User")
+                .email(email)
+                .phoneNumber("9123456780")
+                .address("1 Test St")
+                .city("Chennai")
+                .state("Tamil Nadu")
+                .pincode("600001")
+                .password("First@test1")
+                .build();
+
+            // First registration — should succeed
+            ResponseEntity<JwtResponseDTO> first = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(first.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+            // Second registration with same email — should conflict
+            ResponseEntity<String> second = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(registerRequest, jsonHeaders()),
+                String.class
+            );
+            assertThat(second.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+
+        @Test
+        @DisplayName("PATCH /users/{id} with invalid status should return 400")
+        void shouldReturn400OnInvalidStatusPatch() {
+            // Register user and get admin token
+            String adminToken = getAdminToken();
+            // Get first user ID from the system
+            ResponseEntity<String> usersResp = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users",
+                HttpMethod.GET,
+                bearerRequest(adminToken),
+                String.class
+            );
+            assertThat(usersResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            // Create a user to patch
+            UserDTO user = UserDTO.builder()
+                .name("Patch Test User")
+                .email(generateUniqueEmail("patchtest"))
+                .phoneNumber("9000001234")
+                .address("5 Patch St")
+                .city("Hyderabad")
+                .state("Telangana")
+                .pincode("500001")
+                .password("Patch@test1")
+                .build();
+
+            ResponseEntity<JwtResponseDTO> reg = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(user, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(reg.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            Long userId = reg.getBody().getUserId();
+
+            // PATCH with an invalid status enum value
+            Map<String, Object> patch = Map.of("status", "NOT_A_REAL_STATUS");
+            HttpHeaders headers = jsonHeaders();
+            headers.setBearerAuth(adminToken);
+            ResponseEntity<String> patchResp = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users/" + userId,
+                HttpMethod.PATCH,
+                new HttpEntity<>(patch, headers),
+                String.class
+            );
+            assertThat(patchResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+
+        @Test
+        @DisplayName("PATCH /users/{id} with valid status should return 200")
+        void shouldReturn200OnValidStatusPatch() {
+            String adminToken = getAdminToken();
+
+            // Create a user to patch
+            UserDTO user = UserDTO.builder()
+                .name("Valid Patch User")
+                .email(generateUniqueEmail("validpatch"))
+                .phoneNumber("9000005678")
+                .address("10 Valid St")
+                .city("Kolkata")
+                .state("West Bengal")
+                .pincode("700001")
+                .password("Valid@test1")
+                .build();
+
+            ResponseEntity<JwtResponseDTO> reg = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(user, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(reg.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            Long userId = reg.getBody().getUserId();
+
+            // PATCH with a valid status
+            Map<String, Object> patch = Map.of("status", "INACTIVE");
+            HttpHeaders headers = jsonHeaders();
+            headers.setBearerAuth(adminToken);
+            ResponseEntity<UserDTO> patchResp = restTemplate.exchange(
+                getBaseUrl() + "/api/v1/users/" + userId,
+                HttpMethod.PATCH,
+                new HttpEntity<>(patch, headers),
+                UserDTO.class
+            );
+            assertThat(patchResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        }
+
+        @Test
+        @DisplayName("Duplicate active subscription should return 400")
+        void shouldReturn400WhenCreatingSecondActiveSubscription() {
+            // Register user
+            UserDTO user = UserDTO.builder()
+                .name("Double Sub User")
+                .email(generateUniqueEmail("doublesub"))
+                .phoneNumber("9000009999")
+                .address("9 Sub St")
+                .city("Jaipur")
+                .state("Rajasthan")
+                .pincode("302001")
+                .password("Double@sub1")
+                .build();
+
+            ResponseEntity<JwtResponseDTO> reg = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/register",
+                new HttpEntity<>(user, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            assertThat(reg.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            Long userId = reg.getBody().getUserId();
+            String userToken = reg.getBody().getToken();
+
+            // Get a plan ID
+            Long planId = planService.getActivePlans().get(0).getId();
+
+            SubscriptionRequestDTO subReq = SubscriptionRequestDTO.builder()
+                .userId(userId)
+                .planId(planId)
+                .autoRenewal(false)
+                .build();
+
+            HttpHeaders headers = jsonHeaders();
+            headers.setBearerAuth(userToken);
+
+            // First subscription — should succeed
+            ResponseEntity<SubscriptionDTO> first = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/subscriptions",
+                new HttpEntity<>(subReq, headers),
+                SubscriptionDTO.class
+            );
+            assertThat(first.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+            // Second subscription with same user — should fail
+            ResponseEntity<String> second = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/subscriptions",
+                new HttpEntity<>(subReq, headers),
+                String.class
+            );
+            assertThat(second.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+
+        private String getAdminToken() {
+            LoginRequestDTO login = LoginRequestDTO.builder()
+                .email(ADMIN_EMAIL)
+                .password(ADMIN_PASSWORD)
+                .build();
+            ResponseEntity<JwtResponseDTO> resp = restTemplate.postForEntity(
+                getBaseUrl() + "/api/v1/auth/login",
+                new HttpEntity<>(login, jsonHeaders()),
+                JwtResponseDTO.class
+            );
+            return resp.getBody().getToken();
+        }
+
+        private HttpEntity<Void> bearerRequest(String token) {
+            HttpHeaders h = new HttpHeaders();
+            h.setBearerAuth(token);
+            return new HttpEntity<>(h);
         }
 
         private HttpHeaders jsonHeaders() {

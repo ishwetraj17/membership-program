@@ -4,6 +4,7 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SecurityException;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
@@ -28,11 +29,29 @@ import java.util.stream.Collectors;
 @Slf4j
 public class JwtTokenProvider {
 
+    /** Known dev-only fallback secret — used ONLY when JWT_SECRET env var is absent. */
+    static final String DEV_FALLBACK_SECRET =
+        "Y2hhbmdlbWVpbnByb2R1Y3Rpb24tdGhpcy1pcy1hLWRldi1vbmx5LXNlY3JldC1rZXkh";
+
     @Value("${app.jwt.secret}")
     private String jwtSecret;
 
     @Value("${app.jwt.expiration-ms:86400000}")
     private long jwtExpirationMs;
+
+    /**
+     * Warn loudly at startup if the application is using the insecure dev-only
+     * JWT secret. In production the JWT_SECRET environment variable MUST be set
+     * to a randomly generated 256-bit Base64 value.
+     * Generate one with: {@code openssl rand -base64 32}
+     */
+    @PostConstruct
+    void validateJwtSecret() {
+        if (DEV_FALLBACK_SECRET.equals(jwtSecret)) {
+            log.warn("⚠️  JWT_SECRET is using the insecure dev-only default! "
+                + "Set the JWT_SECRET environment variable before deploying to production.");
+        }
+    }
 
     @Value("${app.jwt.refresh-expiration-ms:604800000}")
     private long refreshExpirationMs;

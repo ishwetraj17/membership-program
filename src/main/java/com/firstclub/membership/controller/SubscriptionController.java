@@ -1,6 +1,8 @@
 package com.firstclub.membership.controller;
 
+import com.firstclub.membership.config.AppConstants;
 import com.firstclub.membership.dto.*;
+import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.service.MembershipService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -8,6 +10,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,14 +49,27 @@ public class SubscriptionController {
             @Parameter(description = "Filter by subscription status") @RequestParam(required = false) String status,
             @Parameter(description = "Filter by user ID") @RequestParam(required = false) Long userId,
             @Parameter(description = "Page number (0-based)") @RequestParam(defaultValue = "0") int page,
-            @Parameter(description = "Page size") @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "Page size (max 100)") @Max(100) @RequestParam(defaultValue = "" + AppConstants.DEFAULT_PAGE_SIZE) int size,
             @Parameter(description = "Sort by field") @RequestParam(defaultValue = "createdAt") String sort,
             @Parameter(description = "Sort direction") @RequestParam(defaultValue = "desc") String direction) {
 
         log.info("Getting all subscriptions - status: {}, userId: {}, page: {}, size: {}", status, userId, page, size);
         Sort.Direction sortDirection = "asc".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sort));
-        Page<SubscriptionDTO> subscriptions = membershipService.getAllSubscriptionsPaged(pageable);
+
+        Subscription.SubscriptionStatus statusEnum = null;
+        if (status != null && !status.isBlank()) {
+            try {
+                statusEnum = Subscription.SubscriptionStatus.valueOf(status.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new com.firstclub.membership.exception.MembershipException(
+                    "Invalid status value: '" + status + "'. Valid values: ACTIVE, CANCELLED, EXPIRED, PENDING",
+                    "INVALID_STATUS_VALUE",
+                    org.springframework.http.HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        Page<SubscriptionDTO> subscriptions = membershipService.getAllSubscriptionsFiltered(statusEnum, userId, pageable);
         log.info("Retrieved {} subscriptions (page {}/{})", subscriptions.getNumberOfElements(), page, subscriptions.getTotalPages());
         return ResponseEntity.ok(subscriptions);
     }
@@ -84,6 +100,7 @@ public class SubscriptionController {
         @ApiResponse(responseCode = "500", description = "Internal server error")
     })
     @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> getSubscriptionById(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id) {
 
@@ -100,6 +117,7 @@ public class SubscriptionController {
         @ApiResponse(responseCode = "500", description = "Internal server error")
     })
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> updateSubscription(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id,
             @Parameter(description = "Subscription update data") @Valid @RequestBody SubscriptionUpdateDTO updateRequest) {
@@ -117,6 +135,7 @@ public class SubscriptionController {
         @ApiResponse(responseCode = "500", description = "Internal server error")
     })
     @PutMapping("/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> cancelSubscription(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id,
             @Parameter(description = "Cancellation reason") @RequestParam(required = false) String reason) {
@@ -133,6 +152,7 @@ public class SubscriptionController {
         @ApiResponse(responseCode = "404", description = "Subscription not found")
     })
     @PutMapping("/{id}/renew")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> renewSubscription(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id) {
 
@@ -157,6 +177,7 @@ public class SubscriptionController {
     }
 
     @PutMapping("/{id}/upgrade")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> upgradeSubscription(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id,
             @Parameter(description = "New plan details") @Valid @RequestBody PlanChangeRequestDTO request) {
@@ -173,6 +194,7 @@ public class SubscriptionController {
         @ApiResponse(responseCode = "404", description = "Subscription or plan not found")
     })
     @PutMapping("/{id}/downgrade")
+    @PreAuthorize("hasRole('ADMIN') or @securityService.isSubscriptionOwner(#id, authentication)")
     public ResponseEntity<SubscriptionDTO> downgradeSubscription(
             @Parameter(description = "Subscription ID") @Positive @PathVariable Long id,
             @Parameter(description = "New plan details") @Valid @RequestBody PlanChangeRequestDTO request) {
@@ -199,7 +221,7 @@ public class SubscriptionController {
                     .map(s -> ResponseEntity.ok(List.of(s)))
                     .orElse(ResponseEntity.ok(List.of()));
         }
-        List<SubscriptionDTO> subscriptions = membershipService.getUserSubscriptions(userId);
+        List<SubscriptionDTO> subscriptions = membershipService.getUserSubscriptionsPaged(userId, Pageable.unpaged()).getContent();
         log.info("Retrieved {} subscriptions for user: {}", subscriptions.size(), userId);
         return ResponseEntity.ok(subscriptions);
     }

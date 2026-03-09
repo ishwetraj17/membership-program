@@ -4,9 +4,15 @@ import com.firstclub.membership.dto.JwtResponseDTO;
 import com.firstclub.membership.dto.LoginRequestDTO;
 import com.firstclub.membership.dto.TokenRefreshRequestDTO;
 import com.firstclub.membership.dto.UserDTO;
+import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.security.JwtTokenProvider;
 import com.firstclub.membership.service.TokenBlacklistService;
 import com.firstclub.membership.service.UserService;
+import com.firstclub.platform.ratelimit.RateLimitDecision;
+import com.firstclub.platform.ratelimit.RateLimitExceededException;
+import com.firstclub.platform.ratelimit.RateLimitPolicy;
+import com.firstclub.platform.ratelimit.RateLimitService;
+import com.firstclub.platform.ratelimit.annotation.RateLimit;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -50,25 +56,47 @@ public class AuthController {
     private final UserService userService;
     private final UserDetailsService userDetailsService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final RateLimitService       rateLimitService;
 
     @PostMapping("/login")
+    @RateLimit(RateLimitPolicy.AUTH_BY_IP)
     @Operation(summary = "Authenticate user", description = "Validates credentials and returns JWT access and refresh tokens")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Login successful"),
-        @ApiResponse(responseCode = "401", description = "Invalid credentials")
+        @ApiResponse(responseCode = "401", description = "Invalid credentials"),
+        @ApiResponse(responseCode = "429", description = "Too many login attempts — try again in 15 minutes")
     })
     public ResponseEntity<JwtResponseDTO> login(@Valid @RequestBody LoginRequestDTO request) {
         log.info("Login attempt for: {}", request.getEmail());
+
+        // Rate-limit by email address before attempting authentication.
+        // The interceptor already checked AUTH_BY_IP; this adds per-email throttling
+        // to prevent credential stuffing that rotates source IPs.
+        RateLimitDecision emailDecision = rateLimitService.checkLimit(
+                RateLimitPolicy.AUTH_BY_EMAIL, request.getEmail().toLowerCase());
+        if (!emailDecision.allowed()) {
+            throw new RateLimitExceededException(
+                    RateLimitPolicy.AUTH_BY_EMAIL,
+                    request.getEmail().toLowerCase(),
+                    emailDecision.resetAt());
+        }
 
         Authentication authentication = authenticationManager.authenticate(
             new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
         );
 
+        // Reset not needed — sliding window naturally expires stale entries.
+
         String token = jwtTokenProvider.generateToken(authentication);
         String refreshToken = jwtTokenProvider.generateRefreshToken(authentication);
 
-        var userDetails = userService.getUserByEmail(request.getEmail())
-            .orElseThrow(() -> new RuntimeException("User not found after successful authentication"));
+        // getUserByEmail is the one necessary DB call here: we need userId and name,
+        // which are not carried in the UserDetails returned by the AuthenticationManager.
+        UserDTO userDetails = userService.getUserByEmail(request.getEmail())
+            .orElseThrow(() -> new MembershipException(
+                "User not found after successful authentication",
+                "INTERNAL_ERROR",
+                HttpStatus.INTERNAL_SERVER_ERROR));
 
         Set<String> roles = authentication.getAuthorities().stream()
             .map(GrantedAuthority::getAuthority)
@@ -89,6 +117,7 @@ public class AuthController {
     }
 
     @PostMapping("/register")
+    @RateLimit(RateLimitPolicy.AUTH_BY_IP)
     @Operation(summary = "Register new user", description = "Creates a new account and returns JWT access and refresh tokens")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "201", description = "Registration successful"),
@@ -133,17 +162,15 @@ public class AuthController {
         @ApiResponse(responseCode = "200", description = "New access token issued"),
         @ApiResponse(responseCode = "401", description = "Invalid or expired refresh token")
     })
-    public ResponseEntity<?> refresh(@Valid @RequestBody TokenRefreshRequestDTO request) {
+    public ResponseEntity<JwtResponseDTO> refresh(@Valid @RequestBody TokenRefreshRequestDTO request) {
         String refreshToken = request.getRefreshToken();
 
         if (!jwtTokenProvider.validateToken(refreshToken) || !jwtTokenProvider.isRefreshToken(refreshToken)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(Map.of("error", "Invalid or expired refresh token"));
+            throw new MembershipException("Invalid or expired refresh token", "INVALID_REFRESH_TOKEN", HttpStatus.UNAUTHORIZED);
         }
 
         if (tokenBlacklistService.isBlacklisted(refreshToken)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(Map.of("error", "Refresh token has been revoked"));
+            throw new MembershipException("Refresh token has been revoked", "REVOKED_REFRESH_TOKEN", HttpStatus.UNAUTHORIZED);
         }
 
         String username = jwtTokenProvider.getUsernameFromToken(refreshToken);
@@ -156,7 +183,16 @@ public class AuthController {
         String newAccessToken = jwtTokenProvider.generateToken(authentication);
         log.info("Access token refreshed for: {}", username);
 
-        return ResponseEntity.ok(Map.of("token", newAccessToken, "type", "Bearer"));
+        Set<String> roles = userDetails.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .collect(Collectors.toSet());
+
+        return ResponseEntity.ok(JwtResponseDTO.builder()
+            .token(newAccessToken)
+            .type("Bearer")
+            .email(username)
+            .roles(roles)
+            .build());
     }
 
     @PostMapping("/logout")
@@ -165,7 +201,7 @@ public class AuthController {
         @ApiResponse(responseCode = "200", description = "Logged out successfully"),
         @ApiResponse(responseCode = "400", description = "No valid token provided")
     })
-    public ResponseEntity<?> logout(HttpServletRequest request) {
+    public ResponseEntity<Map<String, String>> logout(HttpServletRequest request) {
         String header = request.getHeader("Authorization");
         if (!StringUtils.hasText(header) || !header.startsWith("Bearer ")) {
             return ResponseEntity.badRequest().body(Map.of("error", "No Bearer token provided"));
@@ -180,4 +216,3 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 }
-

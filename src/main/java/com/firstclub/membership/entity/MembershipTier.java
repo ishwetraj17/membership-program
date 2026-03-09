@@ -1,10 +1,7 @@
 package com.firstclub.membership.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
+import lombok.*;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.math.BigDecimal;
@@ -21,6 +18,7 @@ import java.util.List;
 @Entity
 @Table(name = "membership_tiers")
 @Data
+@EqualsAndHashCode(of = "id")
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -67,5 +65,6 @@ public class MembershipTier {
     // Each tier can have multiple plans (monthly, quarterly, yearly)
     @OneToMany(mappedBy = "tier", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonIgnore  // Prevents Jackson serialization issues in REST endpoints
+    @ToString.Exclude
     private List<MembershipPlan> plans;
 }

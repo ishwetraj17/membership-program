@@ -1,0 +1,33 @@
+# Build output
+target/
+
+# Version control
+.git
+.gitignore
+
+# IDE metadata
+.idea/
+*.iml
+.vscode/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Secrets — never copy into image
+.env
+.env.local
+*.key
+*.pem
+*.crt
+
+# Docs and scripts that are not needed at runtime
+README.md
+SETUP_INSTRUCTIONS.md
+docs/
+*.sh
+
+# Test outputs
+stress_test.py
+user_stress_test.py
+master_api_tests.py

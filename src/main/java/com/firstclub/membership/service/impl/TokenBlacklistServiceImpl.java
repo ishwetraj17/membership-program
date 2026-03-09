@@ -1,5 +1,6 @@
 package com.firstclub.membership.service.impl;
 
+import com.firstclub.membership.config.AppConstants;
 import com.firstclub.membership.security.JwtTokenProvider;
 import com.firstclub.membership.service.TokenBlacklistService;
 import lombok.RequiredArgsConstructor;
@@ -49,8 +50,8 @@ public class TokenBlacklistServiceImpl implements TokenBlacklistService {
         return blacklist.containsKey(token);
     }
 
-    /** Remove expired entries every 10 minutes. */
-    @Scheduled(fixedRate = 600_000)
+    /** Remove expired entries every {@link AppConstants#TOKEN_CLEANUP_INTERVAL_MS} ms (10 minutes). */
+    @Scheduled(fixedRate = AppConstants.TOKEN_CLEANUP_INTERVAL_MS)
     public void evictExpired() {
         long now = Instant.now().getEpochSecond();
         int before = blacklist.size();

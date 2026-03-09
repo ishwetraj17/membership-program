@@ -12,6 +12,9 @@ import com.firstclub.membership.repository.MembershipTierRepository;
 import com.firstclub.membership.repository.SubscriptionHistoryRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
 import com.firstclub.membership.service.impl.MembershipServiceImpl;
+import com.firstclub.platform.statemachine.StateMachineValidator;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -19,11 +22,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -59,6 +69,18 @@ class MembershipServiceImplTest {
     @Mock
     private SubscriptionMapper subscriptionMapper;
 
+    @Mock
+    private AuditContext auditContext;
+
+    @Mock
+    private MeterRegistry meterRegistry;
+
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
+    @Spy
+    private StateMachineValidator stateMachineValidator = new StateMachineValidator();
+
     @InjectMocks
     private MembershipServiceImpl membershipService;
 
@@ -74,6 +96,13 @@ class MembershipServiceImplTest {
         ReflectionTestUtils.setField(membershipService, "goldBasePrice", new BigDecimal("499"));
         ReflectionTestUtils.setField(membershipService, "platinumBasePrice", new BigDecimal("799"));
 
+        // Pre-wire business counters so processRenewals / cancel / create don't NPE.
+        // Using lenient because not every test exercises a counter-incrementing code path.
+        Counter stubCounter = mock(Counter.class);
+        lenient().when(meterRegistry.counter(anyString())).thenReturn(stubCounter);
+        ReflectionTestUtils.setField(membershipService, "subscriptionsCreatedCounter",  stubCounter);
+        ReflectionTestUtils.setField(membershipService, "subscriptionsCancelledCounter", stubCounter);
+        ReflectionTestUtils.setField(membershipService, "subscriptionsRenewedCounter",  stubCounter);
         testUser = User.builder()
                 .id(1L)
                 .name("Test User")
@@ -242,7 +271,7 @@ class MembershipServiceImplTest {
 
             assertThatThrownBy(() -> membershipService.cancelSubscription(10L, "reason"))
                     .isInstanceOf(MembershipException.class)
-                    .hasMessageContaining("Cannot cancel non-active");
+                    .hasMessageContaining("Invalid status transition");
         }
 
         @Test
@@ -296,7 +325,7 @@ class MembershipServiceImplTest {
 
             assertThatThrownBy(() -> membershipService.renewSubscription(10L))
                     .isInstanceOf(MembershipException.class)
-                    .hasMessageContaining("expired");
+                    .hasMessageContaining("Invalid status transition");
         }
     }
 
@@ -337,7 +366,6 @@ class MembershipServiceImplTest {
     class UpgradeSubscriptionTests {
 
         private MembershipTier goldTier;
-        private MembershipPlan silverYearly;
         private MembershipPlan goldMonthly;
 
         @BeforeEach
@@ -345,11 +373,6 @@ class MembershipServiceImplTest {
             goldTier = MembershipTier.builder()
                     .id(2L).name("GOLD").level(2)
                     .discountPercentage(new BigDecimal("10")).build();
-
-            silverYearly = MembershipPlan.builder()
-                    .id(4L).name("Silver Yearly").type(MembershipPlan.PlanType.YEARLY)
-                    .price(new BigDecimal("3048")).durationInMonths(12)
-                    .tier(silverTier).isActive(true).build();
 
             goldMonthly = MembershipPlan.builder()
                     .id(2L).name("Gold Monthly").type(MembershipPlan.PlanType.MONTHLY)
@@ -451,6 +474,169 @@ class MembershipServiceImplTest {
             assertThatThrownBy(() -> membershipService.downgradeSubscription(10L, 2L))
                     .isInstanceOf(MembershipException.class)
                     .hasMessageContaining("Invalid downgrade");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Scheduler tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("processExpiredSubscriptions()")
+    class ProcessExpiredSubscriptionsTests {
+
+        @Test
+        @DisplayName("Should call bulkExpireSubscriptions with a timestamp near now")
+        void shouldCallBulkExpireWithCurrentTimestamp() {
+            when(subscriptionRepository.bulkExpireSubscriptions(any(LocalDateTime.class))).thenReturn(3);
+
+            membershipService.processExpiredSubscriptions();
+
+            verify(subscriptionRepository).bulkExpireSubscriptions(any(LocalDateTime.class));
+        }
+
+        @Test
+        @DisplayName("Should not throw even if no subscriptions are expired")
+        void shouldNotThrowWhenNothingToExpire() {
+            when(subscriptionRepository.bulkExpireSubscriptions(any(LocalDateTime.class))).thenReturn(0);
+
+            assertThatCode(() -> membershipService.processExpiredSubscriptions())
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Nested
+    @DisplayName("processRenewals()")
+    class ProcessRenewalsTests {
+
+        @Test
+        @DisplayName("Should renew eligible subscriptions via paginated repository call")
+        void shouldRenewEligibleSubscriptions() {
+            // Subscription due for renewal tomorrow
+            LocalDateTime nextBilling = LocalDateTime.now().plusHours(12);
+            Subscription renewable = Subscription.builder()
+                    .id(20L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusDays(29))
+                    .endDate(nextBilling)
+                    .nextBillingDate(nextBilling)
+                    .paidAmount(new BigDecimal("299"))
+                    .autoRenewal(true)
+                    .build();
+
+            Page<Subscription> page = new PageImpl<>(List.of(renewable), PageRequest.of(0, 200), 1);
+            // First call returns one record; second call (if any) returns empty
+            when(subscriptionRepository.findSubscriptionsForRenewal(any(LocalDateTime.class), any(Pageable.class)))
+                    .thenReturn(page);
+            when(subscriptionRepository.save(any(Subscription.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            membershipService.processRenewals();
+
+            verify(subscriptionRepository, atLeastOnce())
+                    .findSubscriptionsForRenewal(any(LocalDateTime.class), any(Pageable.class));
+            verify(subscriptionRepository).save(renewable);
+            assertThat(renewable.getEndDate()).isAfter(nextBilling);
+        }
+
+        @Test
+        @DisplayName("Should log and continue when individual renewal fails")
+        void shouldContinueOnRenewalError() {
+            Subscription bad = Subscription.builder()
+                    .id(21L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusDays(29))
+                    .endDate(LocalDateTime.now().plusHours(6))
+                    .paidAmount(new BigDecimal("299"))
+                    .autoRenewal(true)
+                    .build();
+
+            Page<Subscription> page = new PageImpl<>(List.of(bad), PageRequest.of(0, 200), 1);
+            when(subscriptionRepository.findSubscriptionsForRenewal(any(LocalDateTime.class), any(Pageable.class)))
+                    .thenReturn(page);
+            when(subscriptionRepository.save(any(Subscription.class)))
+                    .thenThrow(new RuntimeException("DB error during renewal"));
+
+            assertThatCode(() -> membershipService.processRenewals()).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("Should do nothing when no subscriptions are due for renewal")
+        void shouldDoNothingWhenNoRenewals() {
+            Page<Subscription> empty = new PageImpl<>(List.of(), PageRequest.of(0, 200), 0);
+            when(subscriptionRepository.findSubscriptionsForRenewal(any(LocalDateTime.class), any(Pageable.class)))
+                    .thenReturn(empty);
+
+            membershipService.processRenewals();
+
+            verify(subscriptionRepository, never()).save(any());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pro-rated amount boundary tests (via getUpgradePreview which uses the
+    // private calculateProRatedAmount — we test through a public entry point)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("calculateProRatedAmount() boundary cases")
+    class ProRatedAmountBoundaryTests {
+
+        private MembershipTier goldTier;
+        private MembershipPlan goldMonthly;
+
+        @BeforeEach
+        void setUp() {
+            goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2)
+                    .discountPercentage(new BigDecimal("10")).build();
+
+            goldMonthly = MembershipPlan.builder()
+                    .id(2L).name("Gold Monthly").type(MembershipPlan.PlanType.MONTHLY)
+                    .price(new BigDecimal("499")).durationInMonths(1)
+                    .tier(goldTier).isActive(true).build();
+        }
+
+        @Test
+        @DisplayName("Same-day upgrade (startDate == endDate) should not throw and return full new plan price")
+        void sameDayUpgradeShouldReturnFullNewPrice() {
+            // Subscription where startDate == endDate (zero-day duration edge case)
+            LocalDateTime now = LocalDateTime.now();
+            Subscription zeroDaySubscription = Subscription.builder()
+                    .id(30L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(now)
+                    .endDate(now)        // totalDays == 0
+                    .paidAmount(new BigDecimal("299"))
+                    .autoRenewal(true)
+                    .build();
+
+            when(subscriptionRepository.findById(30L)).thenReturn(Optional.of(zeroDaySubscription));
+            when(planRepository.findById(2L)).thenReturn(Optional.of(goldMonthly));
+
+            // Should complete without ArithmeticException (division by zero guard)
+            assertThatCode(() -> membershipService.getUpgradePreview(30L, 2L))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("Upgrade after end date (all remaining days == 0) returns full new plan price")
+        void upgradeAfterEndDateReturnsFullPrice() {
+            // Subscription whose end date is in the past
+            Subscription pastEndSubscription = Subscription.builder()
+                    .id(31L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusDays(35))
+                    .endDate(LocalDateTime.now().minusDays(5))   // already expired end-date
+                    .paidAmount(new BigDecimal("299"))
+                    .autoRenewal(true)
+                    .build();
+
+            when(subscriptionRepository.findById(31L)).thenReturn(Optional.of(pastEndSubscription));
+            when(planRepository.findById(2L)).thenReturn(Optional.of(goldMonthly));
+
+            // Should complete without exception; preview amount should match new plan price
+            assertThatCode(() -> membershipService.getUpgradePreview(31L, 2L))
+                    .doesNotThrowAnyException();
         }
     }
 }

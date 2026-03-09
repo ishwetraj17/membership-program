@@ -1,7 +1,8 @@
 package com.firstclub.membership.controller;
 
+import com.firstclub.membership.config.AppConstants;
 import com.firstclub.membership.dto.*;
-import com.firstclub.membership.entity.User;
+import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +26,6 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * REST Controller for user management operations
@@ -91,7 +92,7 @@ public class UserController {
     @ApiResponse(responseCode = "200", description = "Users retrieved successfully")
     public ResponseEntity<Page<UserDTO>> getAllUsers(
             @Parameter(description = "Page number (0-based)") @RequestParam(defaultValue = "0") int page,
-            @Parameter(description = "Page size") @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "Page size (max 100)") @Max(100) @RequestParam(defaultValue = "" + AppConstants.DEFAULT_PAGE_SIZE) int size,
             @Parameter(description = "Sort by field") @RequestParam(defaultValue = "createdAt") String sort,
             @Parameter(description = "Sort direction: asc or desc") @RequestParam(defaultValue = "desc") String direction) {
         Sort.Direction sortDir = "asc".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
@@ -119,7 +120,7 @@ public class UserController {
     
     @PatchMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN') or @securityService.isSameUser(#id, authentication)")
-    @Operation(summary = "Partially update user", description = "Updates specific user fields")
+    @Operation(summary = "Partially update user", description = "Updates specific user fields. Only non-null fields are applied.")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "User updated successfully"),
         @ApiResponse(responseCode = "400", description = "Invalid input"),
@@ -127,44 +128,22 @@ public class UserController {
     })
     public ResponseEntity<UserDTO> partialUpdateUser(
             @Parameter(description = "User ID", example = "1") @Positive @PathVariable Long id,
-            @RequestBody Map<String, Object> updates) {
-        log.info("Partially updating user: {} with fields: {}", id, updates.keySet());
-        
-        try {
-            // Get current user
-            UserDTO currentUser = userService.getUserById(id).orElseThrow(() -> 
-                new RuntimeException("User not found with id: " + id));
-            
-            // Apply partial updates
-            if (updates.containsKey("name")) {
-                currentUser.setName((String) updates.get("name"));
-            }
-            if (updates.containsKey("phoneNumber")) {
-                currentUser.setPhoneNumber((String) updates.get("phoneNumber"));
-            }
-            if (updates.containsKey("address")) {
-                currentUser.setAddress((String) updates.get("address"));
-            }
-            if (updates.containsKey("city")) {
-                currentUser.setCity((String) updates.get("city"));
-            }
-            if (updates.containsKey("state")) {
-                currentUser.setState((String) updates.get("state"));
-            }
-            if (updates.containsKey("pincode")) {
-                currentUser.setPincode((String) updates.get("pincode"));
-            }
-            if (updates.containsKey("status")) {
-                currentUser.setStatus(User.UserStatus.valueOf((String) updates.get("status")));
-            }
-            
-            // Update with full object
-            UserDTO updatedUser = userService.updateUser(id, currentUser);
-            return ResponseEntity.ok(updatedUser);
-        } catch (Exception e) {
-            log.error("Error during partial update for user: {}", id, e);
-            throw e;
-        }
+            @Valid @RequestBody PatchUserDTO patches) {
+        log.info("Partially updating user: {}", id);
+
+        UserDTO currentUser = userService.getUserById(id)
+            .orElseThrow(() -> MembershipException.userNotFound(id));
+
+        if (patches.getName() != null)        currentUser.setName(patches.getName());
+        if (patches.getPhoneNumber() != null) currentUser.setPhoneNumber(patches.getPhoneNumber());
+        if (patches.getAddress() != null)     currentUser.setAddress(patches.getAddress());
+        if (patches.getCity() != null)        currentUser.setCity(patches.getCity());
+        if (patches.getState() != null)       currentUser.setState(patches.getState());
+        if (patches.getPincode() != null)     currentUser.setPincode(patches.getPincode());
+        if (patches.getStatus() != null)      currentUser.setStatus(patches.getStatus());
+
+        UserDTO updatedUser = userService.updateUser(id, currentUser);
+        return ResponseEntity.ok(updatedUser);
     }
     
     @DeleteMapping("/{id}")
@@ -227,7 +206,7 @@ public class UserController {
             return ResponseEntity.notFound().build();
         }
         
-        List<SubscriptionDTO> subscriptions = membershipService.getUserSubscriptions(userId);
+        List<SubscriptionDTO> subscriptions = membershipService.getUserSubscriptionsPaged(userId, Pageable.unpaged()).getContent();
         log.info("Retrieved {} subscription records for user: {}", subscriptions.size(), userId);
         return ResponseEntity.ok(subscriptions);
     }
@@ -285,7 +264,7 @@ public class UserController {
         }
         
         // Verify subscription belongs to user
-        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptions(userId);
+        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptionsPaged(userId, Pageable.unpaged()).getContent();
         boolean subscriptionBelongsToUser = userSubscriptions.stream()
             .anyMatch(sub -> sub.getId().equals(subscriptionId));
             
@@ -323,7 +302,7 @@ public class UserController {
         }
         
         // Verify subscription belongs to user
-        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptions(userId);
+        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptionsPaged(userId, Pageable.unpaged()).getContent();
         boolean subscriptionBelongsToUser = userSubscriptions.stream()
             .anyMatch(sub -> sub.getId().equals(subscriptionId));
             
@@ -359,7 +338,7 @@ public class UserController {
             return ResponseEntity.notFound().build();
         }
         
-        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptions(userId);
+        List<SubscriptionDTO> userSubscriptions = membershipService.getUserSubscriptionsPaged(userId, Pageable.unpaged()).getContent();
         boolean subscriptionBelongsToUser = userSubscriptions.stream()
             .anyMatch(sub -> sub.getId().equals(subscriptionId));
             

@@ -25,20 +25,30 @@ import java.util.Optional;
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
     
     /**
-     * Find all subscriptions for a user, ordered by creation date
-     * 
+     * Find all subscriptions for a user, ordered by creation date — paginated.
+     *
+     * @param user     the user
+     * @param pageable pagination parameters
+     * @return page of subscriptions
+     */
+    Page<Subscription> findByUserOrderByCreatedAtDesc(User user, Pageable pageable);
+
+    /**
+     * Find all subscriptions for a user, ordered by creation date.
+     *
      * @param user the user
      * @return List of subscriptions
      */
     List<Subscription> findByUserOrderByCreatedAtDesc(User user);
     
     /**
-     * Find subscriptions by status
-     * 
+     * Find subscriptions by status — paginated to prevent OOM on large datasets.
+     *
      * @param status subscription status
-     * @return List of subscriptions with the status
+     * @param pageable pagination parameters
+     * @return page of subscriptions with the given status
      */
-    List<Subscription> findByStatus(Subscription.SubscriptionStatus status);
+    Page<Subscription> findByStatus(Subscription.SubscriptionStatus status, Pageable pageable);
     
     /**
      * Find active subscription for a user
@@ -56,17 +66,38 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
                                                         @Param("currentTime") LocalDateTime currentTime);
     
     /**
-     * Find subscriptions due for renewal
-     * 
-     * Used by background job to process auto-renewals.
-     * 
+     * Find subscriptions due for renewal — paginated to support large renewal batches.
+     *
+     * @param renewalDate date to check for renewals
+     * @param pageable    pagination parameters
+     * @return page of subscriptions due for renewal
+     */
+    @Query("SELECT s FROM Subscription s WHERE s.autoRenewal = true " +
+           "AND s.status = 'ACTIVE' AND s.nextBillingDate <= :renewalDate")
+    Page<Subscription> findSubscriptionsForRenewal(@Param("renewalDate") LocalDateTime renewalDate, Pageable pageable);
+
+    /**
+     * Find subscriptions due for renewal (unbounded) — kept for single-instance CLI usage.
+     * Prefer the paginated overload in scheduled jobs.
+     *
      * @param renewalDate date to check for renewals
      * @return List of subscriptions due for renewal
      */
     @Query("SELECT s FROM Subscription s WHERE s.autoRenewal = true " +
            "AND s.status = 'ACTIVE' AND s.nextBillingDate <= :renewalDate")
     List<Subscription> findSubscriptionsForRenewal(@Param("renewalDate") LocalDateTime renewalDate);
-    
+
+    /**
+     * Find subscriptions whose {@code next_renewal_at} has elapsed and that are still ACTIVE.
+     * Used by {@link com.firstclub.dunning.service.RenewalService}.
+     *
+     * @param now current timestamp
+     * @return subscriptions eligible for managed renewal
+     */
+    @Query("SELECT s FROM Subscription s WHERE s.nextRenewalAt IS NOT NULL " +
+           "AND s.nextRenewalAt <= :now AND s.status = 'ACTIVE'")
+    List<Subscription> findDueForRenewal(@Param("now") LocalDateTime now);
+
     /**
      * Check if user has any active subscriptions
      */
@@ -123,4 +154,25 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
     @Modifying
     @Query("UPDATE Subscription s SET s.status = 'EXPIRED' WHERE s.status = 'ACTIVE' AND s.endDate < :now")
     int bulkExpireSubscriptions(@Param("now") LocalDateTime now);
+
+    /**
+     * Admin list with optional status and userId filters.
+     * Passing {@code null} for either param disables that filter.
+     */
+    @Query("SELECT s FROM Subscription s WHERE " +
+           "(:status IS NULL OR s.status = :status) AND " +
+           "(:userId IS NULL OR s.user.id = :userId)")
+    Page<Subscription> findWithFilters(
+            @Param("status") Subscription.SubscriptionStatus status,
+            @Param("userId") Long userId,
+            Pageable pageable);
+
+    /**
+     * Ownership check for @PreAuthorize expressions.
+     * Returns true when the subscription belongs to the non-deleted user with
+     * the given email — single COUNT query, no entity loading.
+     */
+    @Query("SELECT COUNT(s) > 0 FROM Subscription s " +
+           "WHERE s.id = :id AND s.user.email = :email AND s.user.isDeleted = false")
+    boolean existsByIdAndUserEmail(@Param("id") Long id, @Param("email") String email);
 }

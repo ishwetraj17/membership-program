@@ -66,19 +66,23 @@ CREATE INDEX idx_plan_active   ON membership_plans (is_active);
 
 -- ─── Subscriptions ────────────────────────────────────────────────────────────
 CREATE TABLE subscriptions (
-    id              BIGSERIAL PRIMARY KEY,
-    user_id         BIGINT              NOT NULL REFERENCES users (id),
-    plan_id         BIGINT              NOT NULL REFERENCES membership_plans (id),
-    status          VARCHAR(20)         NOT NULL DEFAULT 'ACTIVE',
-    start_date      TIMESTAMP           NOT NULL,
-    end_date        TIMESTAMP           NOT NULL,
-    auto_renew      BOOLEAN             NOT NULL DEFAULT TRUE,
-    paid_amount     NUMERIC(10, 2)      NOT NULL,
-    cancel_reason   TEXT,
-    created_at      TIMESTAMP           NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP           NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                  BIGSERIAL PRIMARY KEY,
+    user_id             BIGINT              NOT NULL REFERENCES users (id),
+    plan_id             BIGINT              NOT NULL REFERENCES membership_plans (id),
+    status              VARCHAR(20)         NOT NULL DEFAULT 'ACTIVE',
+    start_date          TIMESTAMP           NOT NULL,
+    end_date            TIMESTAMP           NOT NULL,
+    next_billing_date   TIMESTAMP           NOT NULL,
+    auto_renewal        BOOLEAN             NOT NULL DEFAULT TRUE,
+    paid_amount         NUMERIC(10, 2)      NOT NULL,
+    cancelled_at        TIMESTAMP,
+    cancellation_reason TEXT,
+    created_at          TIMESTAMP           NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP           NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_subscription_user_id   ON subscriptions (user_id);
 CREATE INDEX idx_subscription_status    ON subscriptions (status);
 CREATE INDEX idx_subscription_end_date  ON subscriptions (end_date);
+CREATE INDEX idx_sub_user_status_end    ON subscriptions (user_id, status, end_date);
+CREATE INDEX idx_sub_auto_renewal_next_bill ON subscriptions (auto_renewal, next_billing_date);

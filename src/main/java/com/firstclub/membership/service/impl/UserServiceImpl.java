@@ -16,10 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Implementation of UserService
@@ -32,7 +30,6 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-@Transactional
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
@@ -41,6 +38,7 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
 
     @Override
+    @Transactional
     public UserDTO createUser(UserDTO userDTO) {
         log.info("Creating new user with email: {}", userDTO.getEmail());
         
@@ -63,6 +61,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional
     public UserDTO createAdminUser(UserDTO userDTO) {
         if (userRepository.existsByEmailAndIsDeletedFalse(userDTO.getEmail())) {
             return getUserByEmail(userDTO.getEmail()).orElseThrow();
@@ -79,6 +78,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional
     public UserDTO updateUser(Long id, UserDTO userDTO) {
         log.info("Updating user with ID: {}", id);
         
@@ -122,21 +122,13 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<UserDTO> getAllUsers() {
-        log.debug("Fetching all users");
-        return userRepository.findAll().stream()
-            .map(userMapper::toDTO)
-            .collect(Collectors.toList());
-    }
-
-    @Override
-    @Transactional(readOnly = true)
     public Page<UserDTO> getAllUsersPaged(Pageable pageable) {
         log.debug("Fetching users - page: {}, size: {}", pageable.getPageNumber(), pageable.getPageSize());
         return userRepository.findByIsDeletedFalse(pageable).map(userMapper::toDTO);
     }
 
     @Override
+    @Transactional
     public void deleteUser(Long id) {
         log.info("Soft-deleting user with ID: {}", id);
         

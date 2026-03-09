@@ -5,7 +5,6 @@ import com.firstclub.membership.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -58,13 +57,6 @@ public interface UserService {
     Optional<UserDTO> getUserByEmail(String email);
 
     /**
-     * Get all users
-     *
-     * @return list of all users
-     */
-    List<UserDTO> getAllUsers();
-
-    /**
      * Get all users with pagination
      *
      * @param pageable pagination parameters
@@ -74,7 +66,7 @@ public interface UserService {
 
     /**
      * Delete user account
-     * 
+     *
      * @param id user ID to delete
      */
     void deleteUser(Long id);

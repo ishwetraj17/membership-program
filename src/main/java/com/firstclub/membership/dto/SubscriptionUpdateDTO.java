@@ -1,7 +1,8 @@
 package com.firstclub.membership.dto;
 
 import com.firstclub.membership.entity.Subscription;
-import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.Builder;
 import lombok.NoArgsConstructor;
@@ -22,11 +23,12 @@ import lombok.AllArgsConstructor;
 public class SubscriptionUpdateDTO {
 
     private Boolean autoRenewal;
-    
-    @Min(value = 1, message = "Plan ID must be positive")
+
+    @Positive(message = "Plan ID must be a positive number")
     private Long newPlanId;
-    
+
     private Subscription.SubscriptionStatus status;
-    
+
+    @Size(max = 500, message = "Reason must not exceed 500 characters")
     private String reason; // For cancellation or status changes
 }

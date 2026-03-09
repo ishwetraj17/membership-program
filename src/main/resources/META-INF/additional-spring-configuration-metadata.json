@@ -13,8 +13,14 @@
     {
       "name": "app.jwt.expiration-ms",
       "type": "java.lang.Long",
-      "description": "JWT token validity duration in milliseconds. Default: 86400000 (24 hours).",
+      "description": "JWT access-token validity duration in milliseconds. Default: 86400000 (24 hours).",
       "defaultValue": 86400000
+    },
+    {
+      "name": "app.jwt.refresh-expiration-ms",
+      "type": "java.lang.Long",
+      "description": "JWT refresh-token validity duration in milliseconds. Default: 604800000 (7 days).",
+      "defaultValue": 604800000
     },
     {
       "name": "app.cors.allowed-origins",
@@ -50,6 +56,47 @@
       "type": "java.lang.String",
       "description": "Cron expression for the daily auto-renewal processing job. Default: 1:05 AM every day.",
       "defaultValue": "0 5 1 * * *"
+    },
+    {
+      "name": "app.swagger.local-url",
+      "type": "java.lang.String",
+      "description": "Base URL used as the local server entry in Swagger/OpenAPI documentation.",
+      "defaultValue": "http://localhost:8080"
+    },
+    {
+      "name": "payments.webhook.secret",
+      "type": "java.lang.String",
+      "description": "HMAC-SHA256 secret used to sign and verify payment gateway webhook payloads. Must be changed from the dev default before deploying to production."
+    },
+    {
+      "name": "revenue.recognition.scheduler.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether the revenue recognition scheduler is active. Disable in dev; enable in production.",
+      "defaultValue": false
+    },
+    {
+      "name": "notifications.webhooks.max-attempts",
+      "type": "java.lang.Integer",
+      "description": "Maximum delivery attempts for outbound merchant webhooks before giving up.",
+      "defaultValue": 6
+    },
+    {
+      "name": "notifications.webhooks.disable-after-gave-up",
+      "type": "java.lang.Integer",
+      "description": "Number of consecutive gave-up events after which the webhook endpoint is disabled.",
+      "defaultValue": 5
+    },
+    {
+      "name": "notifications.webhooks.dispatch-timeout-seconds",
+      "type": "java.lang.Integer",
+      "description": "HTTP connect+read timeout in seconds for outbound webhook dispatch.",
+      "defaultValue": 10
+    },
+    {
+      "name": "projections.snapshot.scheduler.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether the projection snapshot scheduler is active. Disable in dev; enable in production.",
+      "defaultValue": false
     }
   ]
 }

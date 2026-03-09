@@ -1,20 +1,28 @@
 package com.firstclub.membership.service.impl;
 
+import com.firstclub.membership.config.AppConstants;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.*;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.mapper.SubscriptionMapper;
 import com.firstclub.membership.repository.*;
+import com.firstclub.membership.service.AuditContext;
 import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.SeedingService;
 import com.firstclub.membership.service.UserService;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.PostConstruct;
@@ -23,6 +31,10 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import com.firstclub.membership.event.*;
+import com.firstclub.platform.statemachine.StateMachineValidator;
+import org.springframework.context.ApplicationEventPublisher;
 
 /**
  * Implementation of MembershipService
@@ -35,8 +47,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-@Transactional
-public class MembershipServiceImpl implements MembershipService {
+public class MembershipServiceImpl implements MembershipService, SeedingService {
     
     private final MembershipTierRepository tierRepository;
     private final MembershipPlanRepository planRepository;
@@ -44,6 +55,15 @@ public class MembershipServiceImpl implements MembershipService {
     private final SubscriptionHistoryRepository subscriptionHistoryRepository;
     private final UserService userService;
     private final SubscriptionMapper subscriptionMapper;
+    private final AuditContext auditContext;
+    private final MeterRegistry meterRegistry;
+    private final ApplicationEventPublisher eventPublisher;
+    private final StateMachineValidator stateMachineValidator;
+
+    // Business event counters — lazily initialised in @PostConstruct
+    private Counter subscriptionsCreatedCounter;
+    private Counter subscriptionsCancelledCounter;
+    private Counter subscriptionsRenewedCounter;
 
     @Value("${membership.pricing.silver:299}")
     private BigDecimal silverBasePrice;
@@ -53,6 +73,10 @@ public class MembershipServiceImpl implements MembershipService {
 
     @Value("${membership.pricing.platinum:799}")
     private BigDecimal platinumBasePrice;
+
+    // Plan duration discount factors — business constants, configurable here rather than buried in code
+    private static final BigDecimal QUARTERLY_DISCOUNT_FACTOR = new BigDecimal("0.95"); // 5% off
+    private static final BigDecimal YEARLY_DISCOUNT_FACTOR    = new BigDecimal("0.85"); // 15% off
     
     /**
      * Initialize default data on application startup
@@ -63,12 +87,21 @@ public class MembershipServiceImpl implements MembershipService {
     @PostConstruct
     public void init() {
         initializeDefaultData();
-        createSampleUsers();
+        subscriptionsCreatedCounter  = meterRegistry.counter("membership.subscriptions.created");
+        subscriptionsCancelledCounter = meterRegistry.counter("membership.subscriptions.cancelled");
+        subscriptionsRenewedCounter  = meterRegistry.counter("membership.subscriptions.renewed");
     }
     
-    @Override
+    /**
+     * Initialize default data on application startup.
+     *
+     * Package-private: called only by {@code @PostConstruct init()} within this class.
+     * Removed from the {@link MembershipService} public interface — initialisation
+     * is an implementation detail, not a public contract.
+     */
+    @Transactional
     @CacheEvict(value = {"plans", "plansByTier", "plansByType", "tiers"}, allEntries = true)
-    public void initializeDefaultData() {
+    void initializeDefaultData() {
         log.info("Starting membership system initialization...");
         
         if (tierRepository.count() == 0) {
@@ -131,10 +164,11 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     /**
-     * Create sample users for demo purposes
+     * Create sample users for demo purposes.
+     * Called by DevDataSeeder (@Profile("dev")) on startup — not from this class.
      */
-    private void createSampleUsers() {
-        if (userService.getAllUsers().isEmpty()) {
+    public void createSampleUsers() {
+        if (userService.getUserByEmail("admin@firstclub.com").isEmpty()) {
             log.info("Creating sample users for demonstration...");
 
             // Admin user — used by integration tests and management
@@ -214,23 +248,23 @@ public class MembershipServiceImpl implements MembershipService {
             .isActive(true)
             .build();
             
-        // Quarterly plan - 5% discount
+        // Quarterly plan - QUARTERLY_DISCOUNT_FACTOR (5% off)
         MembershipPlan quarterlyPlan = MembershipPlan.builder()
             .name(tier.getName() + " Quarterly")
             .description("Quarterly " + tier.getName() + " membership with savings")
             .type(MembershipPlan.PlanType.QUARTERLY)
-            .price(basePrice.multiply(new BigDecimal("3")).multiply(new BigDecimal("0.95")))
+            .price(basePrice.multiply(new BigDecimal("3")).multiply(QUARTERLY_DISCOUNT_FACTOR))
             .durationInMonths(3)
             .tier(tier)
             .isActive(true)
             .build();
             
-        // Yearly plan - 15% discount
+        // Yearly plan - YEARLY_DISCOUNT_FACTOR (15% off)
         MembershipPlan yearlyPlan = MembershipPlan.builder()
             .name(tier.getName() + " Yearly")
             .description("Yearly " + tier.getName() + " membership with maximum savings")
             .type(MembershipPlan.PlanType.YEARLY)
-            .price(basePrice.multiply(new BigDecimal("12")).multiply(new BigDecimal("0.85")))
+            .price(basePrice.multiply(new BigDecimal("12")).multiply(YEARLY_DISCOUNT_FACTOR))
             .durationInMonths(12)
             .tier(tier)
             .isActive(true)
@@ -246,18 +280,24 @@ public class MembershipServiceImpl implements MembershipService {
     /**
      * Get base pricing for tier levels from configuration.
      * Prices are defined in application.properties (membership.pricing.*).
+     * Throws if an unrecognised level is passed — prevents silent wrong-price bugs.
      */
     private BigDecimal getBasePriceForTier(Integer tierLevel) {
         return switch (tierLevel) {
             case 1 -> silverBasePrice;
             case 2 -> goldBasePrice;
             case 3 -> platinumBasePrice;
-            default -> silverBasePrice;
+            default -> throw new MembershipException(
+                "No pricing configured for tier level " + tierLevel
+                    + ". Supported levels: 1 (Silver), 2 (Gold), 3 (Platinum).",
+                "UNSUPPORTED_TIER_LEVEL",
+                org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR
+            );
         };
     }
     
     @Override
-    @Transactional(isolation = Isolation.SERIALIZABLE)
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
     public SubscriptionDTO createSubscription(SubscriptionRequestDTO request) {
         log.info("Creating subscription for user: {} with plan: {}", request.getUserId(), request.getPlanId());
         
@@ -303,14 +343,18 @@ public class MembershipServiceImpl implements MembershipService {
             
         Subscription savedSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription created successfully with ID: {}", savedSubscription.getId());
+        subscriptionsCreatedCounter.increment();
         
         recordHistory(savedSubscription, SubscriptionHistory.EventType.CREATED,
             null, plan.getId(), null, Subscription.SubscriptionStatus.ACTIVE, "Subscription created");
+        eventPublisher.publishEvent(new SubscriptionCreatedEvent(
+                this, savedSubscription.getId(), savedSubscription.getUser().getId(), plan.getId()));
 
         return convertSubscriptionToDTO(savedSubscription);
     }
     
     @Override
+    @Transactional
     public SubscriptionDTO updateSubscription(Long subscriptionId, SubscriptionUpdateDTO updateDTO) {
         log.info("Updating subscription: {} with update request: {}", subscriptionId, updateDTO);
         
@@ -342,8 +386,8 @@ public class MembershipServiceImpl implements MembershipService {
                 // Calculate pro-rated adjustments for plan changes
                 subscription.setPlan(newPlan);
                 
-                // Update subscription end date based on new plan duration
-                LocalDateTime newEndDate = calculateNewEndDate(subscription.getStartDate(), newPlan.getDurationInMonths());
+                // Update subscription end date from NOW — not from original start date (bug fix)
+                LocalDateTime newEndDate = LocalDateTime.now().plusMonths(newPlan.getDurationInMonths());
                 subscription.setEndDate(newEndDate);
                 subscription.setNextBillingDate(newEndDate);
                 
@@ -360,28 +404,22 @@ public class MembershipServiceImpl implements MembershipService {
         // Handle status changes
         if (updateDTO.getStatus() != null && updateDTO.getStatus() != subscription.getStatus()) {
             Subscription.SubscriptionStatus newStatus = updateDTO.getStatus();
-            
-            // Validate status transition
-            if (isValidStatusTransition(subscription.getStatus(), newStatus)) {
-                subscription.setStatus(newStatus);
-                
-                // Handle specific status change logic
-                if (newStatus == Subscription.SubscriptionStatus.CANCELLED) {
-                    subscription.setCancelledAt(LocalDateTime.now());
-                    subscription.setCancellationReason(
-                        updateDTO.getReason() != null ? updateDTO.getReason() : "Updated via API"
-                    );
-                    subscription.setAutoRenewal(false);
-                }
-                
-                hasChanges = true;
-                log.info("Updated subscription {} status to: {}", subscriptionId, newStatus);
-            } else {
-                throw new MembershipException(
-                    "Invalid status transition from " + subscription.getStatus() + " to " + newStatus, 
-                    "INVALID_STATUS_TRANSITION"
+            Subscription.SubscriptionStatus oldStatus = subscription.getStatus();
+
+            // Validate state transition — throws MembershipException if illegal
+            stateMachineValidator.validate("SUBSCRIPTION", oldStatus, newStatus);
+            subscription.setStatus(newStatus);
+
+            if (newStatus == Subscription.SubscriptionStatus.CANCELLED) {
+                subscription.setCancelledAt(LocalDateTime.now());
+                subscription.setCancellationReason(
+                    updateDTO.getReason() != null ? updateDTO.getReason() : "Updated via API"
                 );
+                subscription.setAutoRenewal(false);
             }
+
+            hasChanges = true;
+            log.info("Updated subscription {} status from {} to {}", subscriptionId, oldStatus, newStatus);
         }
         
         if (!hasChanges) {
@@ -396,76 +434,52 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     /**
-     * Helper method to calculate new end date based on plan duration
-     */
-    private LocalDateTime calculateNewEndDate(LocalDateTime startDate, Integer durationInMonths) {
-        return startDate.plusMonths(durationInMonths);
-    }
-    
-    /**
-     * Calculate pro-rated billing amount for plan changes
-     * 
-     * Calculates the difference between plans based on remaining time in current subscription.
-     * Positive amount = user owes money (upgrade), Negative = user gets credit (downgrade)
+     * Calculate pro-rated billing amount for plan changes.
+     *
+     * Positive return = user owes additional amount (upgrade).
+     * Negative return = user receives a credit (downgrade).
+     *
+     * Guard: if totalDays == 0 (same-day create+change edge case), charge full new plan price
+     * to avoid ArithmeticException on divide-by-zero.
      */
     private BigDecimal calculateProRatedAmount(Subscription subscription, MembershipPlan currentPlan, MembershipPlan newPlan) {
         LocalDateTime now = LocalDateTime.now();
-        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(subscription.getStartDate(), subscription.getEndDate());
+        long totalDays     = java.time.temporal.ChronoUnit.DAYS.between(subscription.getStartDate(), subscription.getEndDate());
         long remainingDays = java.time.temporal.ChronoUnit.DAYS.between(now, subscription.getEndDate());
-        
+
         if (remainingDays <= 0) {
-            // If subscription expired, charge full new plan price
+            // Past end date — charge full new plan price
             return newPlan.getPrice();
         }
-        
-        // Calculate unused portion of current plan
-        BigDecimal unusedCurrentPlanValue = currentPlan.getPrice()
-            .multiply(new BigDecimal(remainingDays))
-            .divide(new BigDecimal(totalDays), 2, java.math.RoundingMode.HALF_UP);
-            
-        // Calculate proportional cost for remaining time on new plan
-        BigDecimal newPlanProportionalCost = newPlan.getPrice()
-            .multiply(new BigDecimal(remainingDays))
-            .divide(new BigDecimal(totalDays), 2, java.math.RoundingMode.HALF_UP);
-            
-        // Return the difference (positive = user pays more, negative = user gets credit)
-        BigDecimal proRatedDifference = newPlanProportionalCost.subtract(unusedCurrentPlanValue);
-        
-        log.debug("Pro-rated calculation: Current plan unused value: {}, New plan proportional cost: {}, Difference: {}", 
-            unusedCurrentPlanValue, newPlanProportionalCost, proRatedDifference);
-            
+
+        if (totalDays <= 0) {
+            // Same-day edge case: charge full new plan price, avoid divide-by-zero
+            return newPlan.getPrice();
+        }
+
+        BigDecimal total     = new BigDecimal(totalDays);
+        BigDecimal remaining = new BigDecimal(remainingDays);
+
+        BigDecimal unusedCurrentPlanValue  = currentPlan.getPrice().multiply(remaining).divide(total, 2, RoundingMode.HALF_UP);
+        BigDecimal newPlanProportionalCost = newPlan.getPrice().multiply(remaining).divide(total, 2, RoundingMode.HALF_UP);
+        BigDecimal proRatedDifference      = newPlanProportionalCost.subtract(unusedCurrentPlanValue);
+
+        log.debug("Pro-rated calculation: totalDays={}, remainingDays={}, unusedCurrent={}, newCost={}, diff={}",
+            totalDays, remainingDays, unusedCurrentPlanValue, newPlanProportionalCost, proRatedDifference);
+
         return proRatedDifference;
     }
     
-    /**
-     * Validate if status transition is allowed
-     */
-    private boolean isValidStatusTransition(Subscription.SubscriptionStatus from, Subscription.SubscriptionStatus to) {
-        // Define valid transitions
-        return switch (from) {
-            case ACTIVE -> to == Subscription.SubscriptionStatus.CANCELLED || 
-                          to == Subscription.SubscriptionStatus.SUSPENDED ||
-                          to == Subscription.SubscriptionStatus.EXPIRED;
-            case PENDING -> to == Subscription.SubscriptionStatus.ACTIVE || 
-                           to == Subscription.SubscriptionStatus.CANCELLED;
-            case SUSPENDED -> to == Subscription.SubscriptionStatus.ACTIVE || 
-                             to == Subscription.SubscriptionStatus.CANCELLED;
-            case EXPIRED -> to == Subscription.SubscriptionStatus.ACTIVE; // Allow reactivation
-            case CANCELLED -> false; // Cannot transition from cancelled
-        };
-    }
     
     @Override
+    @Transactional
     public SubscriptionDTO cancelSubscription(Long subscriptionId, String reason) {
         log.info("Cancelling subscription: {} with reason: {}", subscriptionId, reason);
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
             .orElseThrow(() -> MembershipException.subscriptionNotFound(subscriptionId));
             
-        if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
-            throw new MembershipException("Cannot cancel non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
-        }
-        
+        stateMachineValidator.validate("SUBSCRIPTION", subscription.getStatus(), Subscription.SubscriptionStatus.CANCELLED);
         subscription.setStatus(Subscription.SubscriptionStatus.CANCELLED);
         subscription.setCancelledAt(LocalDateTime.now());
         subscription.setCancellationReason(reason);
@@ -474,25 +488,26 @@ public class MembershipServiceImpl implements MembershipService {
         
         Subscription cancelledSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription cancelled successfully: {} with reason: {}", subscriptionId, reason);
+        subscriptionsCancelledCounter.increment();
         
         recordHistory(cancelledSubscription, SubscriptionHistory.EventType.CANCELLED,
-            cancelledSubscription.getPlan().getId(), cancelledSubscription.getPlan().getId(),
+            cancelledSubscription.getPlan().getId(), null,
             Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.CANCELLED, reason);
+        eventPublisher.publishEvent(new SubscriptionCancelledEvent(
+                this, cancelledSubscription.getId(), cancelledSubscription.getUser().getId(), reason));
 
         return convertSubscriptionToDTO(cancelledSubscription);
     }
     
     @Override
+    @Transactional
     public SubscriptionDTO renewSubscription(Long subscriptionId) {
         log.info("Renewing subscription: {}", subscriptionId);
         
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
             .orElseThrow(() -> new MembershipException("Subscription not found", "SUBSCRIPTION_NOT_FOUND"));
             
-        if (subscription.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
-            throw new MembershipException("Only expired subscriptions can be renewed", "INVALID_SUBSCRIPTION_STATUS");
-        }
-        
+        stateMachineValidator.validate("SUBSCRIPTION", subscription.getStatus(), Subscription.SubscriptionStatus.ACTIVE);
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime newEndDate = now.plusMonths(subscription.getPlan().getDurationInMonths());
         
@@ -503,10 +518,14 @@ public class MembershipServiceImpl implements MembershipService {
         
         Subscription renewedSubscription = subscriptionRepository.save(subscription);
         log.info("Subscription renewed successfully: {}", subscriptionId);
+        subscriptionsRenewedCounter.increment();
         
         recordHistory(renewedSubscription, SubscriptionHistory.EventType.RENEWED,
             renewedSubscription.getPlan().getId(), renewedSubscription.getPlan().getId(),
             Subscription.SubscriptionStatus.EXPIRED, Subscription.SubscriptionStatus.ACTIVE, "Subscription renewed");
+        eventPublisher.publishEvent(new SubscriptionRenewedEvent(
+                this, renewedSubscription.getId(), renewedSubscription.getUser().getId(),
+                renewedSubscription.getPlan().getId()));
 
         return convertSubscriptionToDTO(renewedSubscription);
     }
@@ -521,17 +540,34 @@ public class MembershipServiceImpl implements MembershipService {
     
     @Override
     @Transactional(readOnly = true)
+    @Deprecated(since = "1.0", forRemoval = true)
     public List<SubscriptionDTO> getUserSubscriptions(Long userId) {
         User user = userService.findUserEntityById(userId);
         return subscriptionRepository.findByUserOrderByCreatedAtDesc(user).stream()
             .map(this::convertSubscriptionToDTO)
             .collect(Collectors.toList());
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<SubscriptionDTO> getUserSubscriptionsPaged(Long userId, Pageable pageable) {
+        User user = userService.findUserEntityById(userId);
+        return subscriptionRepository.findByUserOrderByCreatedAtDesc(user, pageable)
+            .map(this::convertSubscriptionToDTO);
+    }
     
     @Override
     @Transactional(readOnly = true)
     public Page<SubscriptionDTO> getAllSubscriptionsPaged(Pageable pageable) {
         return subscriptionRepository.findAll(pageable)
+            .map(this::convertSubscriptionToDTO);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<SubscriptionDTO> getAllSubscriptionsFiltered(
+            Subscription.SubscriptionStatus status, Long userId, Pageable pageable) {
+        return subscriptionRepository.findWithFilters(status, userId, pageable)
             .map(this::convertSubscriptionToDTO);
     }
 
@@ -544,6 +580,7 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     @Override
+    @Transactional
     public SubscriptionDTO upgradeSubscription(Long subscriptionId, Long newPlanId) {
         log.info("Upgrading subscription: {} to plan: {}", subscriptionId, newPlanId);
         
@@ -581,11 +618,15 @@ public class MembershipServiceImpl implements MembershipService {
             currentPlan.getId(), newPlan.getId(),
             Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.ACTIVE,
             "Upgraded to " + newPlan.getName());
-        
+        eventPublisher.publishEvent(new SubscriptionUpgradedEvent(
+                this, upgradedSubscription.getId(), upgradedSubscription.getUser().getId(),
+                currentPlan.getId(), newPlan.getId()));
+
         return convertSubscriptionToDTO(upgradedSubscription);
     }
     
     @Override
+    @Transactional
     public SubscriptionDTO downgradeSubscription(Long subscriptionId, Long newPlanId) {
         log.info("Downgrading subscription: {} to plan: {}", subscriptionId, newPlanId);
         
@@ -626,11 +667,15 @@ public class MembershipServiceImpl implements MembershipService {
             currentPlan.getId(), newPlan.getId(),
             Subscription.SubscriptionStatus.ACTIVE, Subscription.SubscriptionStatus.ACTIVE,
             "Downgraded to " + newPlan.getName());
-        
+        eventPublisher.publishEvent(new SubscriptionDowngradedEvent(
+                this, downgradedSubscription.getId(), downgradedSubscription.getUser().getId(),
+                currentPlan.getId(), newPlan.getId()));
+
         return convertSubscriptionToDTO(downgradedSubscription);
     }
     
     @Override
+    @Transactional(timeout = 120)
     public void processExpiredSubscriptions() {
         log.info("Processing expired subscriptions...");
         int expired = subscriptionRepository.bulkExpireSubscriptions(LocalDateTime.now());
@@ -638,25 +683,48 @@ public class MembershipServiceImpl implements MembershipService {
     }
     
     @Override
+    @Transactional(timeout = 300)
     public void processRenewals() {
         log.info("Processing subscription renewals...");
-        
-        List<Subscription> renewalSubscriptions = subscriptionRepository
-            .findSubscriptionsForRenewal(LocalDateTime.now().plusDays(1));
-            
-        renewalSubscriptions.forEach(sub -> {
-            try {
-                LocalDateTime newEndDate = sub.getEndDate().plusMonths(sub.getPlan().getDurationInMonths());
-                sub.setEndDate(newEndDate);
-                sub.setNextBillingDate(newEndDate);
-                subscriptionRepository.save(sub);
-                log.info("Renewed subscription: {}", sub.getId());
-            } catch (Exception e) {
-                log.error("Failed to renew subscription: {}", sub.getId(), e);
+
+        int pageNum = 0;
+        int totalRenewed = 0;
+        int totalFailed = 0;
+        Page<Subscription> renewalsPage;
+
+        do {
+            renewalsPage = subscriptionRepository.findSubscriptionsForRenewal(
+                LocalDateTime.now().plusDays(1),
+                PageRequest.of(pageNum, AppConstants.RENEWAL_BATCH_SIZE)
+            );
+            for (Subscription sub : renewalsPage.getContent()) {
+                try {
+                    renewSingleSubscription(sub);
+                    totalRenewed++;
+                } catch (Exception e) {
+                    totalFailed++;
+                    log.error("Failed to renew subscription: {}", sub.getId(), e);
+                }
             }
-        });
-        
-        log.info("Processed {} subscription renewals", renewalSubscriptions.size());
+            pageNum++;
+        } while (renewalsPage.hasNext());
+
+        log.info("Renewal job complete: {} renewed, {} failed", totalRenewed, totalFailed);
+        subscriptionsRenewedCounter.increment(totalRenewed);
+    }
+
+    /**
+     * Renews a single subscription in its own transaction so that a failure
+     * for one record does not roll back the entire renewal batch.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 30)
+    public void renewSingleSubscription(Subscription sub) {
+        LocalDateTime newEndDate = sub.getEndDate().plusMonths(sub.getPlan().getDurationInMonths());
+        sub.setStartDate(LocalDateTime.now());
+        sub.setEndDate(newEndDate);
+        sub.setNextBillingDate(newEndDate);
+        subscriptionRepository.save(sub);
+        log.debug("Renewed subscription: {}", sub.getId());
     }
     
     @Override
@@ -686,6 +754,7 @@ public class MembershipServiceImpl implements MembershipService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable("systemHealth")
     public SystemHealthDTO getSystemHealth() {
         long active    = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.ACTIVE);
         long expired   = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.EXPIRED);
@@ -706,7 +775,7 @@ public class MembershipServiceImpl implements MembershipService {
                 .activeSubscriptions(active)
                 .expiredSubscriptions(expired)
                 .cancelledSubscriptions(cancelled)
-                .availablePlans(planRepository.findByIsActiveTrue().size())
+                .availablePlans((int) planRepository.countActivePlans())
                 .membershipTiers(3)
                 .tierDistribution(tierDist)
                 .build())
@@ -720,6 +789,7 @@ public class MembershipServiceImpl implements MembershipService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable("analytics")
     public AnalyticsDTO getAnalytics() {
         BigDecimal totalRevenue = subscriptionRepository.sumActiveRevenue();
         long active = subscriptionRepository.countBySubscriptionStatus(Subscription.SubscriptionStatus.ACTIVE);
@@ -748,7 +818,7 @@ public class MembershipServiceImpl implements MembershipService {
             .membership(AnalyticsDTO.MembershipMetricsDTO.builder()
                 .tierPopularity(tierPop)
                 .planTypeDistribution(planTypeDist)
-                .totalActivePlans(planRepository.findByIsActiveTrue().size())
+                .totalActivePlans((int) planRepository.countActivePlans())
                 .build())
             .summary(AnalyticsDTO.SummaryDTO.builder()
                 .totalSubscriptions(total)
@@ -760,6 +830,8 @@ public class MembershipServiceImpl implements MembershipService {
 
     /**
      * Records a subscription lifecycle event to the audit log.
+     * Captures the authenticated user ID when invoked from a web request;
+     * null for background scheduler jobs (no security context).
      */
     private void recordHistory(Subscription subscription,
                                SubscriptionHistory.EventType eventType,
@@ -776,6 +848,7 @@ public class MembershipServiceImpl implements MembershipService {
             .oldStatus(oldStatus)
             .newStatus(newStatus)
             .reason(reason)
+            .changedByUserId(auditContext.getCurrentUserId())
             .build();
         subscriptionHistoryRepository.save(entry);
     }

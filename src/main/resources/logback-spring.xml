@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!--
+      logback-spring.xml — structured JSON logging for FirstClub Membership
+
+      All log events are emitted as single-line JSON objects containing:
+        @timestamp  — ISO-8601 timestamp
+        level       — log level (INFO, WARN, ERROR, …)
+        logger      — logger (class) name
+        thread      — thread name
+        message     — log message
+        requestId   — MDC: X-Request-Id propagated by RequestIdFilter
+        requestPath — MDC: HTTP path set by RequestMetricsFilter
+        httpStatus  — MDC: HTTP response status set by RequestMetricsFilter
+        latencyMs   — MDC: request latency (ms) set by RequestMetricsFilter
+        stack_trace — exception stack trace (only when an exception is attached)
+
+      Active profiles:
+        default / dev  → console JSON (human-readable via jq)
+        prod            → console JSON (same format, suitable for log aggregators)
+    -->
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="membership"/>
+
+    <!-- =========================================================
+         Common JSON appender
+         ========================================================= -->
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <!-- Standard fields -->
+                <timestamp>
+                    <fieldName>@timestamp</fieldName>
+                    <timeZone>UTC</timeZone>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                    <shortenedLoggerNameLength>36</shortenedLoggerNameLength>
+                </loggerName>
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+                <message/>
+
+                <!-- Include all MDC keys as top-level JSON fields:
+                       requestId, requestPath, httpStatus, latencyMs -->
+                <mdc/>
+
+                <!-- Stack trace when present -->
+                <stackTrace>
+                    <fieldName>stack_trace</fieldName>
+                    <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                        <maxDepthPerCause>10</maxDepthPerCause>
+                        <shortenedClassNameLength>36</shortenedClassNameLength>
+                        <rootCauseFirst>true</rootCauseFirst>
+                    </throwableConverter>
+                </stackTrace>
+
+                <!-- Static app name field -->
+                <pattern>
+                    <pattern>{"app": "${APP_NAME}"}</pattern>
+                </pattern>
+            </providers>
+        </encoder>
+    </appender>
+
+    <!-- =========================================================
+         Root logger
+         ========================================================= -->
+    <root level="INFO">
+        <appender-ref ref="JSON_CONSOLE"/>
+    </root>
+
+    <!-- Reduce noise from framework packages in dev -->
+    <logger name="org.springframework" level="WARN"/>
+    <logger name="org.hibernate"       level="WARN"/>
+    <logger name="com.zaxxer.hikari"   level="WARN"/>
+
+    <!-- FirstClub application code stays at INFO -->
+    <logger name="com.firstclub"       level="INFO"/>
+
+</configuration>

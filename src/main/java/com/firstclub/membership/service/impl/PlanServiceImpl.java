@@ -37,7 +37,7 @@ public class PlanServiceImpl implements PlanService {
     private final MembershipPlanMapper planMapper;
 
     @Override
-    @Cacheable("plans")
+    @Cacheable(value = "plans", key = "'all'")
     public List<MembershipPlanDTO> getAllPlans() {
         List<MembershipPlan> plans = planRepository.findAll();
         Map<Long, List<MembershipPlan>> byTier = plans.stream()
@@ -48,7 +48,7 @@ public class PlanServiceImpl implements PlanService {
     }
 
     @Override
-    @Cacheable("plans")
+    @Cacheable(value = "plans", key = "'active'")
     public List<MembershipPlanDTO> getActivePlans() {
         List<MembershipPlan> plans = planRepository.findByIsActiveTrue();
         Map<Long, List<MembershipPlan>> byTier = plans.stream()
@@ -82,11 +82,12 @@ public class PlanServiceImpl implements PlanService {
     @Override
     @Cacheable(value = "plansByType", key = "#type.name()")
     public List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type) {
-        List<MembershipPlan> allActive = planRepository.findByIsActiveTrue();
-        Map<Long, List<MembershipPlan>> byTier = allActive.stream()
+        // Push the type filter to the database — no in-memory loading of all plans.
+        List<MembershipPlan> plans = planRepository.findByTypeAndIsActiveTrue(type);
+        // Build same-tier groups from the already-filtered set (no extra DB call).
+        Map<Long, List<MembershipPlan>> byTier = plans.stream()
             .collect(Collectors.groupingBy(p -> p.getTier().getId()));
-        return allActive.stream()
-            .filter(p -> p.getType() == type)
+        return plans.stream()
             .map(p -> convertPlanToDTO(p, byTier.get(p.getTier().getId())))
             .collect(Collectors.toList());
     }

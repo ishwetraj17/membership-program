@@ -3,17 +3,156 @@
 > **Production-Ready Membership Management System**  
 > **Architected & Developed by: Shwet Raj**
 
-[![Java](https://img.shields.io/badge/Java-22-orange?style=for-the-badge&logo=openjdk)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.0-brightgreen?style=for-the-badge&logo=spring)](https://spring.io/projects/spring-boot)
+[![Java](https://img.shields.io/badge/Java-17-orange?style=for-the-badge&logo=openjdk)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.3-brightgreen?style=for-the-badge&logo=spring)](https://spring.io/projects/spring-boot)
 [![Maven](https://img.shields.io/badge/Maven-3.6+-blue?style=for-the-badge&logo=apachemaven)](https://maven.apache.org/)
 [![H2 Database](https://img.shields.io/badge/Database-H2-lightblue?style=for-the-badge)](http://www.h2database.com/)
 [![Swagger](https://img.shields.io/badge/API-Swagger-green?style=for-the-badge&logo=swagger)](https://swagger.io/)
 
 ## 📋 **Executive Summary**
 
-A comprehensive, enterprise-grade membership management system designed specifically for the Indian market. Features a sophisticated 3-tier membership architecture with progressive benefits, flexible subscription models, and real-time business analytics.
+A comprehensive, enterprise-grade membership management system designed specifically for the Indian market. Features a sophisticated 3-tier membership architecture with progressive benefits, flexible subscription models, and real-time business analytics — built on a full double-entry ledger, payment gateway simulation, reconciliation engine, and immutable domain event log.
 
-**🎯 Key Achievement**: Built a production-ready system that handles complex subscription lifecycles, tier-based benefits, and provides actionable business insights through custom analytics endpoints.
+**🎯 Key Achievement**: Built a production-ready fintech platform with 896 tests that handles complex subscription lifecycles, payment processing, ledger accounting, nightly reconciliation, and domain event replay — all with zero test failures.
+
+---
+
+## 📚 Documentation Index
+
+> **For a senior engineer:** Start with [Architecture Overview](docs/architecture/01-system-overview.md), then [Write Paths](docs/architecture/03-write-paths.md), then [Ledger Model](docs/accounting/01-ledger-model.md). You will understand the full system in under 5 minutes.
+
+### Architecture
+
+| Doc | Summary |
+|---|---|
+| [01 System Overview](docs/architecture/01-system-overview.md) | Entity model, tech stack, consistency guarantees, honest limits |
+| [02 Bounded Contexts](docs/architecture/02-bounded-contexts.md) | All 20 modules: purpose, writes, reads, dependencies |
+| [03 Write Paths](docs/architecture/03-write-paths.md) | Every state-changing flow from API to DB to outbox |
+| [04 Read Paths](docs/architecture/04-read-paths.md) | Transactional reads, projections, cache strategy |
+| [05 Sync vs Async](docs/architecture/05-sync-vs-async.md) | Outbox pattern, which paths are async and why |
+| [06 Concurrency Model](docs/architecture/06-concurrency-model.md) | Optimistic locks, SELECT FOR UPDATE, idempotency keys |
+| [07 Failure Domains](docs/architecture/07-failure-domains.md) | What breaks under DB down, Redis down, gateway timeout |
+| [08 Scaling Path](docs/architecture/08-scaling-path.md) | Current limits, Redis impact, when to add Kafka/split services |
+
+### Accounting
+
+| Doc | Summary |
+|---|---|
+| [01 Ledger Model](docs/accounting/01-ledger-model.md) | Chart of accounts, journal entries, worked example, invariants |
+| [02 Revenue Recognition](docs/accounting/02-revenue-recognition.md) | ASC 606/IFRS 15, schedule generation, nightly posting |
+| [03 Refunds and Disputes](docs/accounting/03-refunds-disputes-accounting.md) | Journal entries for refunds, chargebacks, dispute reserve |
+| [04 Reconciliation Layers](docs/accounting/04-reconciliation-layers.md) | 4-layer recon model, mismatch types, SQL patterns |
+
+### Operations
+
+| Doc | Summary |
+|---|---|
+| [01 Reconciliation Playbook](docs/operations/01-reconciliation-playbook.md) | How to read recon reports, investigate mismatches, escalate |
+| [02 DLQ Retry Runbook](docs/operations/02-dlq-retry-runbook.md) | Inspect and replay failed outbox events |
+| [03 Risk Review Flow](docs/operations/03-risk-review-flow.md) | Velocity limits, IP blocks, daily review checklist |
+| [04 Incident Response](docs/operations/04-incident-response.md) | P0–P3 severity, response steps, post-incident checklist |
+| [05 Manual Repair Actions](docs/operations/05-manual-repair-actions.md) | Every repair action: API, SQL, safety preconditions |
+| [06 Data Rebuild Playbook](docs/operations/06-data-rebuild-playbook.md) | Rebuild projections, snapshots, schedules from source tables |
+
+### API
+
+| Doc | Summary |
+|---|---|
+| [01 Idempotency Model](docs/api/01-idempotency-model.md) | 3-layer idempotency: DB + Redis cache + in-flight lock |
+| [02 Webhook Contracts](docs/api/02-webhook-contracts.md) | Event types, payload schema, HMAC signature, retry policy |
+| [03 Error Model](docs/api/03-error-model.md) | RFC 7807 error shape, full error code catalogue |
+| [04 Auth and API Key Model](docs/api/04-auth-and-api-key-model.md) | JWT, API keys, roles, scopes, rate limiting |
+
+### Performance
+
+| Doc | Summary |
+|---|---|
+| [01 Bottlenecks](docs/performance/01-bottlenecks.md) | Known bottlenecks with thresholds and planned fixes |
+| [02 Redis Usage](docs/performance/02-redis-usage.md) | All 30+ Redis key patterns with TTLs and fallbacks |
+| [03 Hot Paths](docs/performance/03-hot-paths.md) | Payment confirmation, subscription create, and dunning flows |
+| [04 Load Test Notes](docs/performance/04-load-test-notes.md) | 6 load test scenarios with success criteria |
+
+---
+
+## How Money Flows
+
+1. Merchant creates a subscription for a customer → `subscriptions_v2` row written, `invoices_v2` draft generated
+2. Invoice is finalized → amount locked, `INVOICE_FINALIZED` event emitted via outbox
+3. Payment intent created against the invoice → `payment_intents_v2` row in `INITIATED`
+4. Gateway processes payment → callback arrives → payment captured in one ACID transaction:
+   - `payment_intents_v2` → `COMPLETED`
+   - `invoices_v2` → `PAID`
+   - `ledger_entries`: `DR ACCOUNTS_RECEIVABLE / CR CASH`
+   - `outbox_events`: `PAYMENT_CAPTURED`
+5. Outbox poller delivers `PAYMENT_CAPTURED` → projections updated, webhook sent to merchant
+6. Revenue recognition schedule: daily rows post `DR DEFERRED_REVENUE / CR REVENUE_RECOGNIZED` each night
+7. Nightly recon at 02:10 compares invoices ↔ payments ↔ ledger ↔ settlement batches
+8. Any discrepancy → `recon_mismatches` row → operator reviews in recon playbook
+
+---
+
+---
+
+## 💳 **Fintech Capabilities**
+
+### **Double-Entry Accounting Ledger**
+
+| Account | Type | Role |
+|---|---|---|
+| `SUBSCRIPTION_LIABILITY` | LIABILITY | Pre-collected subscription fees |
+| `REVENUE_SUBSCRIPTIONS` | REVENUE | Earned revenue on activation |
+| `PG_CLEARING` | ASSET | Funds held by payment gateway |
+| `BANK` | ASSET | Settled funds in bank account |
+| `ACCOUNTS_RECEIVABLE` | ASSET | Outstanding invoices |
+| `REFUNDS_PAYABLE` | LIABILITY | Credit notes and refunds |
+
+Every financial event posts a balanced journal entry (DR = CR). The ledger is append-only; corrections use reversal entries.
+
+### **Payment Gateway Simulation**
+
+- Create `PaymentIntent` → receive a gateway `txnId`
+- Simulate gateway callback: `SUCCEEDED`, `FAILED`, `REFUNDED`
+- Idempotent capture: duplicate gateway callbacks are safely ignored (idempotency key)
+- Risk controls: velocity limits + IP block list checked before capture
+
+### **Invoice & Billing Engine**
+
+- Auto-generated invoice on subscription creation (status: `PENDING`)
+- Invoice transitions: `PENDING → PAID` on payment, `PENDING → VOID` on cancellation
+- Credit notes for proration on mid-cycle downgrade
+- Full refund lifecycle: `PENDING → APPROVED → PROCESSED`
+
+### **Subscription Renewal & Dunning**
+
+- Nightly renewal job: activates due subscriptions, posts ledger entries
+- Dunning engine: 3-attempt retry schedule (Day 1 / Day 4 / Day 7)
+- Grace-period management: `ACTIVE → PAST_DUE → SUSPENDED → CANCELLED`
+- Outbox pattern: reliable domain event delivery (transactional outbox table)
+
+### **Nightly Reconciliation & Settlement**
+
+- **Settlement** (`02:00 UTC`): sums all captured payments → posts `DEBIT BANK / CREDIT PG_CLEARING` ledger entry
+- **Reconciliation** (`02:10 UTC`): compares invoice totals (expected) vs captured payments (actual); detects 4 mismatch types:
+  - `INVOICE_NO_PAYMENT` — invoice with no matching payment
+  - `PAYMENT_NO_INVOICE` — orphan payment with no invoice
+  - `AMOUNT_MISMATCH` — invoice amount ≠ captured amount
+  - `DUPLICATE_GATEWAY_TXN` — same gateway txn ID on multiple payments
+- Admin REST API: JSON report + CSV download + on-demand settlement trigger
+
+### **Immutable Domain Event Log + Replay**
+
+- Append-only `domain_events` table: `INVOICE_CREATED`, `PAYMENT_SUCCEEDED`, `SUBSCRIPTION_ACTIVATED`, `REFUND_ISSUED`
+- Events written in the same DB transaction as the triggering operation (no dual-write risk)
+- Replay endpoint (`VALIDATE_ONLY` mode): re-checks 4 accounting invariants over any time window without mutating state
+
+### **Security & Observability**
+
+- PII encryption: `phoneNumber` and `address` encrypted at rest with AES-256-GCM
+- Structured JSON logging with `requestId` MDC propagation
+- Micrometer metrics: `payment.captured`, `invoice.created`, `reconciliation.mismatches`
+- Risk controls: per-user velocity limits + IP block list with `@PreAuthorize` on admin endpoints
+
+---
 
 -----
 
@@ -38,8 +177,8 @@ A comprehensive, enterprise-grade membership management system designed specific
 
 #### **Core Technologies**
 
-- **Java 22** - Latest LTS with modern language features
-- **Spring Boot 3.2.0** - Enterprise framework with auto-configuration
+- **Java 17** - LTS release with modern language features
+- **Spring Boot 3.4.3** - Enterprise framework with auto-configuration
 - **Spring Data JPA** - Declarative data access with Hibernate
 - **H2 Database** - In-memory database optimized for demos
 - **Swagger/OpenAPI 3** - Comprehensive API documentation
@@ -96,7 +235,41 @@ Yearly: ₹499 × 12 × 0.85 = ₹5,099 (Save ₹889)
 
 -----
 
-## 🚀 **Quick Start Guide**
+## � **Running with Local PostgreSQL (Docker Compose)**
+
+For a production-parity local environment backed by a real PostgreSQL instance:
+
+### **Prerequisites**
+- **Docker** (with the `docker compose` plugin or Docker Desktop)
+
+### **Steps**
+
+```bash
+# 1. Start PostgreSQL + PgAdmin
+bash scripts/dev-up.sh
+
+# 2. Run the application with the local profile
+bash scripts/run-local.sh
+```
+
+| Service              | URL                        | Credentials                           |
+|----------------------|----------------------------|---------------------------------------|
+| Application (API)    | http://localhost:8080      | —                                     |
+| Swagger UI           | http://localhost:8080/swagger-ui.html | —                        |
+| PgAdmin              | http://localhost:5050      | admin@firstclub.com / admin           |
+| PostgreSQL (direct)  | localhost:5432             | membership_user / membership_pass     |
+
+```bash
+# Stop and remove containers (data volume preserved)
+bash scripts/dev-down.sh
+```
+
+> **Note:** The local profile uses `spring.jpa.hibernate.ddl-auto=validate` with Flyway migrations,
+> so the database schema is managed by Flyway — not re-created on every restart.
+
+---
+
+## �🚀 **Quick Start Guide**
 
 ### **⚡ Prerequisites**
 
@@ -283,41 +456,59 @@ curl -X GET http://localhost:8080/api/v1/membership/analytics
 ### **🏗️ Clean Architecture Implementation**
 
 ```
-src/main/java/com/firstclub/membership/
-├── MembershipApplication.java          # Spring Boot entry point with custom branding
-├── config/
-│   └── DatabaseConfig.java            # H2 configuration with production switches
-    └── SwaggerConfig.java
-├── controller/                         # REST API endpoints (15+ endpoints)
-│   ├── MembershipController.java      # Core business operations
-    ├── PlanController.java
-    ├── SubscriptionController.java
-│   └── UserController.java           # User management operations
-├── dto/                               # Data Transfer Objects with validation
-│   ├── UserDTO.java                  # User data with Indian validation
-│   ├── MembershipPlanDTO.java        # Plan data with benefits calculation
-│   ├── SubscriptionDTO.java          # Complete subscription information
-│   ├── SubscriptionRequestDTO.java   # Subscription creation payload
-│   └── SubscriptionUpdateDTO.java    # Subscription modification payload
-├── entity/                           # JPA entities with relationships
-│   ├── User.java                    # User entity with Indian constraints
-│   ├── MembershipTier.java          # Tier definition with benefits
-│   ├── MembershipPlan.java          # Plan entity with pricing logic
-│   └── Subscription.java           # Subscription with lifecycle management
-├── exception/                       # Comprehensive error handling
-│   ├── MembershipException.java    # Custom business exceptions
-│   └── GlobalExceptionHandler.java # Centralized exception handling
-├── repository/                     # Data access layer
-│   ├── UserRepository.java        # User data operations
-│   ├── MembershipTierRepository.java
-│   ├── MembershipPlanRepository.java
-│   └── SubscriptionRepository.java # Complex subscription queries
-└── service/                       # Business logic implementation
-    ├── UserService.java          # User management interface
-    ├── MembershipService.java    # Core business interface
-    └── impl/                     # Service implementations
-        ├── UserServiceImpl.java # User business logic
-        └── MembershipServiceImpl.java # Core membership logic
+src/main/java/com/firstclub/
+├── membership/
+│   ├── MembershipApplication.java        # Spring Boot entry point
+│   ├── config/                           # DatabaseConfig, SwaggerConfig
+│   ├── controller/                       # Membership, Plan, Subscription, User controllers
+│   ├── dto/                              # Request/response DTOs
+│   ├── entity/                           # JPA entities (User, Subscription, etc.)
+│   ├── exception/                        # GlobalExceptionHandler, MembershipException
+│   ├── repository/                       # Spring Data JPA repositories
+│   └── service/impl/                     # MembershipServiceImpl, UserServiceImpl
+├── billing/                              # Invoice engine
+│   ├── entity/                           # Invoice, InvoiceLineItem
+│   ├── repository/                       # InvoiceRepository
+│   ├── service/                          # InvoiceService
+│   └── controller/                       # InvoiceController
+├── payment/                              # Payment gateway simulation
+│   ├── entity/                           # Payment, PaymentIntent
+│   ├── repository/                       # PaymentRepository, PaymentIntentRepository
+│   ├── service/                          # PaymentService
+│   ├── controller/                       # PaymentController, GatewayCallbackController
+│   └── risk/                             # RiskService, VelocityChecker, IpBlockService
+├── ledger/                               # Double-entry accounting
+│   ├── entity/                           # LedgerEntry, LedgerAccount
+│   ├── repository/                       # LedgerEntryRepository, LedgerAccountRepository
+│   ├── service/                          # LedgerService
+│   └── controller/                       # LedgerController
+├── refund/                               # Refund & credit note engine
+│   ├── entity/                           # Refund
+│   ├── repository/                       # RefundRepository
+│   ├── service/                          # RefundService
+│   └── controller/                       # RefundController
+├── renewal/                              # Subscription renewal & dunning
+│   ├── entity/                           # DunningAttempt
+│   ├── service/                          # RenewalService, DunningService
+│   └── scheduler/                        # RenewalScheduler
+├── outbox/                               # Transactional outbox pattern
+│   ├── entity/                           # OutboxEvent
+│   ├── repository/                       # OutboxEventRepository
+│   ├── service/                          # OutboxService, OutboxPoller
+│   └── config/                           # DomainEventTypes
+├── recon/                                # Nightly reconciliation & settlement
+│   ├── entity/                           # Settlement, ReconReport, ReconMismatch, MismatchType
+│   ├── repository/                       # SettlementRepository, ReconReportRepository
+│   ├── dto/                              # ReconReportDTO, SettlementDTO, ReconMismatchDTO
+│   ├── service/                          # ReconciliationService, SettlementService
+│   ├── scheduler/                        # NightlyReconScheduler
+│   └── controller/                       # ReconAdminController
+└── events/                               # Immutable domain event log
+    ├── entity/                           # DomainEvent
+    ├── repository/                       # DomainEventRepository
+    ├── dto/                              # ReplayReportDTO
+    ├── service/                          # DomainEventLog, DomainEventTypes, ReplayService
+    └── controller/                       # ReplayController
 ```
 
 ### **🎯 Key Implementation Features**
@@ -395,6 +586,46 @@ src/main/java/com/firstclub/membership/
 |------|------------------------------|-------------------------------|
 |`GET` |`/api/v1/membership/health`   |System health and metrics      |
 |`GET` |`/api/v1/membership/analytics`|Business intelligence dashboard|
+
+### **💰 Payment APIs**
+
+|Method|Endpoint                                   |Description                              |
+|------|-------------------------------------------|-----------------------------------------|
+|`POST`|`/api/v1/payments/intent`                  |Create a payment intent                  |
+|`POST`|`/api/v1/payments/gateway/callback`        |Simulate gateway callback (SUCCEEDED/FAILED/REFUNDED) |
+|`GET` |`/api/v1/payments/{id}`                    |Get payment details                      |
+
+### **📄 Invoice APIs**
+
+|Method|Endpoint                        |Description                    |
+|------|--------------------------------|-------------------------------|
+|`GET` |`/api/v1/invoices/{id}`         |Get invoice with line items    |
+|`GET` |`/api/v1/invoices/user/{userId}`|List invoices for a user       |
+
+### **📒 Ledger APIs**
+
+|Method|Endpoint                        |Description                    |
+|------|--------------------------------|-------------------------------|
+|`GET` |`/api/v1/ledger/accounts`       |List all ledger accounts       |
+|`GET` |`/api/v1/ledger/balances`       |Get current debit/credit totals|
+|`GET` |`/api/v1/ledger/entries`        |List journal entries (pageable)|
+
+### **🔄 Refund APIs**
+
+|Method|Endpoint                        |Description                    |
+|------|--------------------------------|-------------------------------|
+|`POST`|`/api/v1/refunds`               |Request a refund               |
+|`POST`|`/api/v1/refunds/{id}/approve`  |Approve a pending refund       |
+|`GET` |`/api/v1/refunds/{id}`          |Get refund status              |
+
+### **🔧 Admin APIs (requires ADMIN role)**
+
+|Method|Endpoint                                   |Description                              |
+|------|-------------------------------------------|-----------------------------------------|
+|`GET` |`/api/v1/admin/recon/daily?date=YYYY-MM-DD`|Run / fetch reconciliation report (JSON) |
+|`GET` |`/api/v1/admin/recon/daily.csv?date=YYYY-MM-DD`|Download reconciliation CSV          |
+|`POST`|`/api/v1/admin/recon/settle?date=YYYY-MM-DD`|Trigger settlement for a date          |
+|`POST`|`/api/v1/admin/replay?from=...&to=...&mode=VALIDATE_ONLY`|Replay domain events (read-only) |
 
 -----
 
@@ -525,26 +756,26 @@ private BigDecimal getBasePriceForTier(Integer tierLevel) {
 
 ## 📈 **Future Roadmap & Extensibility**
 
-### **Phase 1: Enhanced Features**
+### **Completed Phases ✅**
 
-- **Payment Gateway Integration** (Razorpay, PayU Money)
-- **Email Notification System** (SendGrid, AWS SES)
-- **SMS Notifications** (Twilio, AWS SNS)
-- **Advanced Coupon Management**
+| Phase | Feature |
+|---|---|
+| Phase 1–7 | Core membership, 3-tier plans, subscription lifecycle, analytics |
+| Phase 8 | Double-entry ledger, invoice engine, payment simulation, refund lifecycle |
+| Phase 9 | Subscription renewal scheduler, dunning engine (3-attempt curve) |
+| Phase 10 | Transactional outbox pattern for reliable event delivery |
+| Phase 11 | Risk controls, PII encryption (AES-256-GCM), Micrometer observability |
+| Phase 12 | Nightly reconciliation, settlement simulation, immutable domain event log + replay |
+| Phase 13 | Architecture Explainability Layer: 24-file docs suite covering architecture, accounting, ops, API, performance |
 
-### **Phase 2: Scale & Performance**
+### **Potential Next Steps**
 
-- **Redis Caching Layer** for improved performance
-- **Microservices Architecture** for independent scaling
-- **Event-Driven Architecture** with Apache Kafka
-- **Advanced Analytics** with machine learning insights
-
-### **Phase 3: Market Expansion**
-
-- **Multi-Currency Support** for international markets
-- **Regional Customization** for different Indian states
-- **Mobile App APIs** with push notifications
-- **B2B Enterprise Features** with bulk management
+- **Real Payment Gateway** (Razorpay / Stripe) replacing simulation layer
+- **Email/SMS Notifications** (AWS SES / SNS) on subscription events
+- **Redis Caching** for ledger balance reads
+- **Kafka Integration** replacing in-process outbox poller
+- **Multi-Currency Support** for international expansion
+- **GraphQL API** for flexible client queries
 
 -----
 
@@ -600,25 +831,102 @@ private BigDecimal getBasePriceForTier(Integer tierLevel) {
 
 ## 🧪 **Automated Testing Suite**
 
-### **Master API Test Suite** 
-Run comprehensive validation of all business logic and APIs:
+### **JUnit / Spring Boot Test Suite**
+
+Run all 896 unit + integration tests:
+
+```bash
+mvn test
+```
+
+**Coverage areas:**
+- ✅ Subscription lifecycle (create, activate, renew, cancel, downgrade, upgrade)
+- ✅ Payment intent create + gateway callback (200+ idempotency scenarios)
+- ✅ Double-entry ledger (every transaction balanced)
+- ✅ Invoice generation, void, credit-note
+- ✅ Refund approval + ledger reversals
+- ✅ Dunning retry schedule (3-attempt curve)
+- ✅ Outbox reliable delivery
+- ✅ Risk controls (velocity + IP block)
+- ✅ Reconciliation mismatch detection (6 cases)
+- ✅ Settlement idempotency (4 cases)
+- ✅ Domain event log + replay invariants
+
+**Test Results:** 896 tests, 0 failures, BUILD SUCCESS
+
+### **Master API Test Suite**
+Run comprehensive end-to-end API validation:
 
 ```bash
 python3 master_api_tests.py
 ```
 
-**What It Tests:**
-- ✅ All 10 core business issues (100% success rate)
-- ✅ Complete API endpoints (18/19 scenarios)  
-- ✅ Error handling and validation
-- ✅ System health and documentation
-- ✅ Business logic flexibility confirmation
+### **2-Minute Demo Script**
 
-**Test Results:** 28/29 tests passing (96.6% success rate)
+Run the full fintech platform walkthrough against a live local instance:
+
+```bash
+bash scripts/demo.sh
+```
+
+The demo script: starts Docker Postgres → boots the app → creates a user and Platinum subscription → simulates a payment → checks ledger balances → triggers settlement and reconciliation → validates domain events with replay.
 
 -----
 
-## 🎉 **Getting Started Today**
+## � **Merchant Platform Support (Phase 1)**
+
+The system has been extended into a **multi-tenant architecture** where every business unit
+operates as an isolated merchant/tenant.
+
+### **Tenant Model**
+
+- Each merchant has a unique, immutable `merchantCode` (pattern: `^[A-Z0-9_]{2,64}$`)
+- Default currency, timezone, and locale are configured per merchant
+- Merchant-scoped settings control webhook delivery, settlement frequency, and dunning behaviour
+- Every merchant has exactly one `MerchantSettings` record (auto-created with defaults)
+
+### **Merchant Lifecycle**
+
+```
+PENDING → ACTIVE → SUSPENDED → ACTIVE   (re-activate)
+PENDING / ACTIVE / SUSPENDED → CLOSED   (terminal)
+```
+
+Transitions are enforced by `StateMachineValidator` (entity key: `"MERCHANT"`).
+
+### **Merchant Admin APIs (v2)**
+
+> All endpoints require `ROLE_ADMIN` and a valid Bearer JWT.
+
+| Method | Endpoint                                    | Description                      |
+|--------|---------------------------------------------|----------------------------------|
+| POST   | `/api/v2/admin/merchants`                   | Create merchant (→ PENDING)      |
+| GET    | `/api/v2/admin/merchants`                   | Paginated list + status filter   |
+| GET    | `/api/v2/admin/merchants/{id}`              | Get by ID                        |
+| PUT    | `/api/v2/admin/merchants/{id}`              | Update mutable fields            |
+| PUT    | `/api/v2/admin/merchants/{id}/status`       | Status transition                |
+| POST   | `/api/v2/admin/merchants/{id}/users`        | Add user to merchant             |
+| GET    | `/api/v2/admin/merchants/{id}/users`        | List merchant users              |
+| DELETE | `/api/v2/admin/merchants/{id}/users/{uid}`  | Remove user (protects last owner)|
+
+### **Package Layout**
+
+```
+com.firstclub.merchant/
+├── controller/   MerchantAdminController, MerchantUserAdminController
+├── dto/          Request + response DTOs
+├── entity/       MerchantAccount, MerchantUser, MerchantSettings + enums
+├── exception/    MerchantException (mirrors MembershipException)
+├── mapper/       MerchantMapper, MerchantUserMapper (MapStruct)
+├── repository/   JPA repositories
+└── service/      MerchantService, MerchantUserService + implementations
+```
+
+Full documentation: [`docs/tenant-model.md`](docs/tenant-model.md)
+
+-----
+
+## �🎉 **Getting Started Today**
 
 1. **Clone the repository**
 2. **Run `mvn spring-boot:run`**
