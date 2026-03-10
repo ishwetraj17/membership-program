@@ -22,4 +22,10 @@ public class CreditNoteDTO {
     private LocalDateTime createdAt;
     private BigDecimal usedAmount;
     private BigDecimal availableBalance;
+
+    // ── Phase 17 fields ──────────────────────────────────────────────────────
+    private Long customerId;
+    private Long availableAmountMinor;
+    private Long sourceInvoiceId;
+    private LocalDateTime expiresAt;
 }

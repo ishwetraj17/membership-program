@@ -47,4 +47,22 @@ public class CreditNote {
     public BigDecimal getAvailableBalance() {
         return amount.subtract(usedAmount);
     }
+
+    // ── Phase 17: credit carry-forward fields ────────────────────────────────
+    /** Denormalised merchant-side customer id for cross-merchant query support. */
+    @Column(name = "customer_id")
+    private Long customerId;
+
+    /** Pre-computed available balance in minor currency units (paise). */
+    @Builder.Default
+    @Column(name = "available_amount_minor", nullable = false)
+    private Long availableAmountMinor = 0L;
+
+    /** Invoice that triggered creation of this credit note (e.g. carry-forward). */
+    @Column(name = "source_invoice_id")
+    private Long sourceInvoiceId;
+
+    /** If set, this credit note may not be applied after this timestamp. */
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
 }

@@ -82,4 +82,23 @@ public class Invoice {
     @Builder.Default
     @Column(name = "grand_total", nullable = false, precision = 18, scale = 4)
     private BigDecimal grandTotal = BigDecimal.ZERO;
+
+    // ── Phase 17: invoice correctness guards ────────────────────────────────
+    /** Effective credit applied in minor units (paise), kept separately from
+     *  CREDIT_APPLIED lines so partial-apply and carry-forward are auditable. */
+    @Builder.Default
+    @Column(name = "effective_credit_applied_minor", nullable = false)
+    private Long effectiveCreditAppliedMinor = 0L;
+
+    /** For rebuilt/corrected invoices: the original invoice this was rebuilt from. */
+    @Column(name = "source_invoice_id")
+    private Long sourceInvoiceId;
+
+    /** Timestamp of the last rebuild-totals action. */
+    @Column(name = "rebuilt_at")
+    private LocalDateTime rebuiltAt;
+
+    /** Principal (username/email) who triggered the last rebuild. */
+    @Column(name = "rebuilt_by", length = 255)
+    private String rebuiltBy;
 }

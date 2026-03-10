@@ -22,4 +22,16 @@ public interface CreditNoteRepository extends JpaRepository<CreditNote, Long> {
             ORDER BY c.createdAt ASC
             """)
     List<CreditNote> findAvailableByUserId(@Param("userId") Long userId);
+
+    // ── Phase 17: customer-scoped credit query ──────────────────────────────────────
+    /**
+     * Returns ALL credit notes (including exhausted) for a customer,
+     * newest-first, for the customer credits API.
+     */
+    @Query("""
+            SELECT c FROM CreditNote c
+            WHERE c.userId = :userId
+            ORDER BY c.createdAt DESC
+            """)
+    List<CreditNote> findAllByUserIdOrderByCreatedAtDesc(@Param("userId") Long userId);
 }

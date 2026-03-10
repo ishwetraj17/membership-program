@@ -35,4 +35,21 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     @org.springframework.data.jpa.repository.Query(
         "SELECT DISTINCT i.subscriptionId FROM Invoice i WHERE i.subscriptionId IS NOT NULL")
     List<Long> findDistinctSubscriptionIds();
-}
+    // ── Phase 17: billing-period overlap guard ──────────────────────────────────────
+    /**
+     * Returns active (OPEN or PAID) invoices for the same subscription whose
+     * billing period overlaps with [periodStart, periodEnd).
+     *
+     * <p>Two periods overlap when:  start1 < end2 AND end1 > start2
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT i FROM Invoice i
+            WHERE i.subscriptionId = :subscriptionId
+              AND i.status IN ('OPEN', 'PAID')
+              AND i.periodStart < :periodEnd
+              AND i.periodEnd   > :periodStart
+            """)
+    List<Invoice> findOverlappingActiveInvoices(
+            @org.springframework.data.repository.query.Param("subscriptionId") Long subscriptionId,
+            @org.springframework.data.repository.query.Param("periodStart")    java.time.LocalDateTime periodStart,
+            @org.springframework.data.repository.query.Param("periodEnd")      java.time.LocalDateTime periodEnd);}
