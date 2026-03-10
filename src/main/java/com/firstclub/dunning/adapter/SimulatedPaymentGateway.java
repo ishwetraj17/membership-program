@@ -34,4 +34,16 @@ public class SimulatedPaymentGateway implements PaymentGatewayPort {
             return ChargeOutcome.FAILED;
         }
     }
+
+    /**
+     * Returns a richer result for the v2 dunning engine, including a simulated
+     * decline code that maps to {@link com.firstclub.dunning.classification.FailureCategory#CARD_DECLINED_GENERIC}.
+     */
+    @Override
+    public ChargeResult chargeWithCode(Long paymentIntentId) {
+        ChargeOutcome outcome = charge(paymentIntentId);
+        return outcome == ChargeOutcome.SUCCESS
+                ? ChargeResult.success()
+                : ChargeResult.failed("simulated_decline");
+    }
 }

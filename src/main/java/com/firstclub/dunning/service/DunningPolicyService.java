@@ -24,6 +24,9 @@ public interface DunningPolicyService {
     /** Return a policy by its code within the merchant's namespace. */
     DunningPolicyResponseDTO getPolicyByCode(Long merchantId, String policyCode);
 
+    /** Return a policy by its numeric database ID within the merchant's namespace. */
+    DunningPolicyResponseDTO getPolicyById(Long merchantId, Long policyId);
+
     /**
      * Resolve the effective policy for a merchant.
      *

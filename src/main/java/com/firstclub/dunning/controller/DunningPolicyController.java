@@ -58,4 +58,16 @@ public class DunningPolicyController {
             @PathVariable String policyCode) {
         return ResponseEntity.ok(dunningPolicyService.getPolicyByCode(merchantId, policyCode));
     }
+
+    @GetMapping("/id/{policyId}")
+    @Operation(
+        summary = "Get a dunning policy by numeric ID",
+        description = "Fetches a dunning policy by its database ID rather than its policy code. "
+                + "Useful when the caller has a policy ID from a dunning attempt record.")
+    public ResponseEntity<DunningPolicyResponseDTO> getPolicyById(
+            @PathVariable Long merchantId,
+            @Parameter(description = "Numeric policy ID", required = true)
+            @PathVariable Long policyId) {
+        return ResponseEntity.ok(dunningPolicyService.getPolicyById(merchantId, policyId));
+    }
 }

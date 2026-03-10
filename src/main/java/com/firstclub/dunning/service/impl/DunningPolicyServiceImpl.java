@@ -77,6 +77,19 @@ public class DunningPolicyServiceImpl implements DunningPolicyService {
         return toDto(loadPolicy(merchantId, policyCode));
     }
 
+    // ── getPolicyById ─────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public DunningPolicyResponseDTO getPolicyById(Long merchantId, Long policyId) {
+        DunningPolicy policy = policyRepository.findById(policyId)
+                .filter(p -> p.getMerchantId().equals(merchantId))
+                .orElseThrow(() -> new MembershipException(
+                        "Dunning policy " + policyId + " not found for merchant " + merchantId,
+                        "DUNNING_POLICY_NOT_FOUND", HttpStatus.NOT_FOUND));
+        return toDto(policy);
+    }
+
     // ── resolvePolicy ─────────────────────────────────────────────────────────
 
     @Override

@@ -57,6 +57,32 @@ public class DunningAttempt {
     @Column(name = "used_backup_method", nullable = false)
     private boolean usedBackupMethod = false;
 
+    // ── Phase 16 — failure-code intelligence fields ───────────────────────────
+
+    /** Raw failure code returned by the payment gateway (e.g. {@code "insufficient_funds"}). */
+    @Column(name = "failure_code", length = 80)
+    private String failureCode;
+
+    /** Broad category derived from {@code failureCode} by {@code FailureCodeClassifier}. */
+    @Column(name = "failure_category", length = 40)
+    private String failureCategory;
+
+    /** Decision taken by the strategy engine after classifying the failure. */
+    @Column(name = "decision_taken", length = 30)
+    private String decisionTaken;
+
+    /** Human-readable explanation of the decision (stored for ops visibility). */
+    @Column(name = "decision_reason", columnDefinition = "TEXT")
+    private String decisionReason;
+
+    /**
+     * {@code true} when a non-retryable failure code caused this attempt to terminate
+     * the entire dunning queue (stopped before the natural policy exhaustion point).
+     */
+    @Builder.Default
+    @Column(name = "stopped_early", nullable = false)
+    private boolean stoppedEarly = false;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

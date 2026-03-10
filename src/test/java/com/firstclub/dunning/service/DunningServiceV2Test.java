@@ -9,8 +9,14 @@ import com.firstclub.dunning.entity.DunningAttempt.DunningStatus;
 import com.firstclub.dunning.entity.DunningPolicy;
 import com.firstclub.dunning.entity.DunningTerminalStatus;
 import com.firstclub.dunning.entity.SubscriptionPaymentPreference;
+import com.firstclub.dunning.DunningDecision;
+import com.firstclub.dunning.DunningDecisionAuditService;
+import com.firstclub.dunning.classification.FailureCategory;
+import com.firstclub.dunning.classification.FailureCodeClassifier;
 import com.firstclub.dunning.port.PaymentGatewayPort;
-import com.firstclub.dunning.port.PaymentGatewayPort.ChargeOutcome;
+import com.firstclub.dunning.port.PaymentGatewayPort.ChargeResult;
+import com.firstclub.dunning.strategy.BackupPaymentMethodSelector;
+import com.firstclub.dunning.strategy.DunningStrategyService;
 import com.firstclub.dunning.repository.DunningAttemptRepository;
 import com.firstclub.dunning.repository.DunningPolicyRepository;
 import com.firstclub.dunning.repository.SubscriptionPaymentPreferenceRepository;
@@ -57,6 +63,10 @@ class DunningServiceV2Test {
     @Mock private PaymentGatewayPort                      paymentGatewayPort;
     @Mock private DomainEventLog                          domainEventLog;
     @Mock private DunningPolicyService                     dunningPolicyService;
+    @Mock private FailureCodeClassifier                    failureCodeClassifier;
+    @Mock private DunningStrategyService                   dunningStrategyService;
+    @Mock private BackupPaymentMethodSelector              backupSelector;
+    @Mock private DunningDecisionAuditService              decisionAuditService;
 
     @InjectMocks
     private DunningServiceV2Impl dunningServiceV2;
@@ -203,7 +213,7 @@ class DunningServiceV2Test {
                     .thenReturn(Optional.of(prefWithBackup));
             when(paymentIntentService.createForInvoice(anyLong(), any(), anyString()))
                     .thenReturn(freshPi);
-            when(paymentGatewayPort.charge(300L)).thenReturn(ChargeOutcome.SUCCESS);
+            when(paymentGatewayPort.chargeWithCode(300L)).thenReturn(ChargeResult.success());
             when(dunningAttemptRepository.findBySubscriptionIdAndStatus(SUBSCRIPTION_ID, DunningStatus.SCHEDULED))
                     .thenReturn(Collections.emptyList());
 
@@ -234,7 +244,11 @@ class DunningServiceV2Test {
                     .thenReturn(Optional.of(prefWithBackup));
             when(paymentIntentService.createForInvoice(anyLong(), any(), anyString()))
                     .thenReturn(freshPi);
-            when(paymentGatewayPort.charge(300L)).thenReturn(ChargeOutcome.FAILED);
+            when(paymentGatewayPort.chargeWithCode(300L)).thenReturn(ChargeResult.failed("expired_card"));
+            when(failureCodeClassifier.classify("expired_card")).thenReturn(FailureCategory.CARD_EXPIRED);
+            when(dunningStrategyService.decide(any(), eq(FailureCategory.CARD_EXPIRED), any()))
+                    .thenReturn(DunningDecision.RETRY_WITH_BACKUP);
+            when(backupSelector.findBackup(SUBSCRIPTION_ID)).thenReturn(java.util.Optional.of(BACKUP_PM_ID));
 
             dunningServiceV2.processDueV2Attempts();
 
@@ -265,10 +279,10 @@ class DunningServiceV2Test {
                     .thenReturn(Optional.empty());
             when(paymentIntentService.createForInvoice(anyLong(), any(), anyString()))
                     .thenReturn(freshPi);
-            when(paymentGatewayPort.charge(300L)).thenReturn(ChargeOutcome.FAILED);
-            // No more scheduled attempts
-            when(dunningAttemptRepository.countBySubscriptionIdAndDunningPolicyIdIsNotNullAndStatus(
-                    SUBSCRIPTION_ID, DunningStatus.SCHEDULED)).thenReturn(0L);
+            when(paymentGatewayPort.chargeWithCode(300L)).thenReturn(ChargeResult.failed("card_declined"));
+            when(failureCodeClassifier.classify("card_declined")).thenReturn(FailureCategory.CARD_DECLINED_GENERIC);
+            when(dunningStrategyService.decide(any(), eq(FailureCategory.CARD_DECLINED_GENERIC), any()))
+                    .thenReturn(DunningDecision.EXHAUSTED);
             when(dunningPolicyRepository.findById(POLICY_ID)).thenReturn(Optional.of(suspendPolicy));
 
             dunningServiceV2.processDueV2Attempts();
@@ -291,9 +305,10 @@ class DunningServiceV2Test {
                     .thenReturn(Optional.empty());
             when(paymentIntentService.createForInvoice(anyLong(), any(), anyString()))
                     .thenReturn(freshPi);
-            when(paymentGatewayPort.charge(300L)).thenReturn(ChargeOutcome.FAILED);
-            when(dunningAttemptRepository.countBySubscriptionIdAndDunningPolicyIdIsNotNullAndStatus(
-                    SUBSCRIPTION_ID, DunningStatus.SCHEDULED)).thenReturn(0L);
+            when(paymentGatewayPort.chargeWithCode(300L)).thenReturn(ChargeResult.failed("card_declined"));
+            when(failureCodeClassifier.classify("card_declined")).thenReturn(FailureCategory.CARD_DECLINED_GENERIC);
+            when(dunningStrategyService.decide(any(), eq(FailureCategory.CARD_DECLINED_GENERIC), any()))
+                    .thenReturn(DunningDecision.EXHAUSTED);
             when(dunningPolicyRepository.findById(POLICY_ID)).thenReturn(Optional.of(cancelPolicy));
 
             dunningServiceV2.processDueV2Attempts();

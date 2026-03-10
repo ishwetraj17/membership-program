@@ -39,4 +39,17 @@ public interface DunningServiceV2 {
      * subscription belongs to the given merchant.
      */
     List<DunningAttempt> getAttemptsForSubscription(Long merchantId, Long subscriptionId);
+
+    /**
+     * Force an immediate retry for a FAILED dunning attempt.
+     *
+     * <p>Creates a new SCHEDULED attempt based on the identified failed attempt,
+     * scheduled at the current time.  The source attempt must be in FAILED state
+     * and must belong to a subscription within the given merchant.
+     *
+     * @param merchantId the merchant that owns the subscription
+     * @param attemptId  the ID of the failed attempt to retry
+     * @return the newly created SCHEDULED attempt
+     */
+    DunningAttempt forceRetry(Long merchantId, Long attemptId);
 }

@@ -4,6 +4,10 @@ import com.firstclub.billing.entity.Invoice;
 import com.firstclub.billing.model.InvoiceStatus;
 import com.firstclub.billing.repository.InvoiceRepository;
 import com.firstclub.billing.service.InvoiceService;
+import com.firstclub.dunning.DunningDecision;
+import com.firstclub.dunning.DunningDecisionAuditService;
+import com.firstclub.dunning.classification.FailureCategory;
+import com.firstclub.dunning.classification.FailureCodeClassifier;
 import com.firstclub.dunning.entity.DunningAttempt;
 import com.firstclub.dunning.entity.DunningAttempt.DunningStatus;
 import com.firstclub.dunning.entity.DunningPolicy;
@@ -11,11 +15,14 @@ import com.firstclub.dunning.entity.DunningTerminalStatus;
 import com.firstclub.dunning.entity.SubscriptionPaymentPreference;
 import com.firstclub.dunning.port.PaymentGatewayPort;
 import com.firstclub.dunning.port.PaymentGatewayPort.ChargeOutcome;
+import com.firstclub.dunning.port.PaymentGatewayPort.ChargeResult;
 import com.firstclub.dunning.repository.DunningAttemptRepository;
 import com.firstclub.dunning.repository.DunningPolicyRepository;
 import com.firstclub.dunning.repository.SubscriptionPaymentPreferenceRepository;
 import com.firstclub.dunning.service.DunningPolicyService;
 import com.firstclub.dunning.service.DunningServiceV2;
+import com.firstclub.dunning.strategy.BackupPaymentMethodSelector;
+import com.firstclub.dunning.strategy.DunningStrategyService;
 import com.firstclub.events.service.DomainEventLog;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.payments.dto.PaymentIntentDTO;
@@ -54,8 +61,13 @@ public class DunningServiceV2Impl implements DunningServiceV2 {
     private final PaymentIntentService                    paymentIntentService;
     private final PaymentGatewayPort                      paymentGatewayPort;
     private final DomainEventLog                          domainEventLog;
+    private final DunningPolicyService                    dunningPolicyService;
 
-    private final DunningPolicyService dunningPolicyService;
+    // ── Phase 16 — failure-code intelligence ─────────────────────────────────
+    private final FailureCodeClassifier       failureCodeClassifier;
+    private final DunningStrategyService      dunningStrategyService;
+    private final BackupPaymentMethodSelector backupSelector;
+    private final DunningDecisionAuditService decisionAuditService;
 
     // ── scheduleAttemptsFromPolicy ────────────────────────────────────────────
 
@@ -195,15 +207,20 @@ public class DunningServiceV2Impl implements DunningServiceV2 {
         Long pmId = resolvePaymentMethodId(attempt, pref);
         attempt.setPaymentMethodId(pmId);
 
-        // Charge
+        // Charge — use chargeWithCode so the failure code is available for classification
         PaymentIntentDTO pi = paymentIntentService.createForInvoice(
                 invoice.getId(), invoice.getTotalAmount(), invoice.getCurrency());
-        ChargeOutcome outcome = paymentGatewayPort.charge(pi.getId());
+        ChargeResult chargeResult = paymentGatewayPort.chargeWithCode(pi.getId());
 
-        if (outcome == ChargeOutcome.SUCCESS) {
+        // Persist the raw failure code before branching
+        if (!chargeResult.isSuccess() && chargeResult.failureCode() != null) {
+            attempt.setFailureCode(chargeResult.failureCode());
+        }
+
+        if (chargeResult.isSuccess()) {
             handleSuccess(attempt, sub, invoice);
         } else {
-            handleFailure(attempt, policy, pref);
+            handleFailureWithIntelligence(attempt, policy, pref, chargeResult.failureCode());
         }
     }
 
@@ -228,45 +245,90 @@ public class DunningServiceV2Impl implements DunningServiceV2 {
                 attempt.getId(), sub.getId());
     }
 
-    private void handleFailure(DunningAttempt attempt, DunningPolicy policy,
-                               SubscriptionPaymentPreference pref) {
-        failAttempt(attempt, "Payment gateway declined");
+    /**
+     * Intelligence-aware failure handler (Phase 16).
+     *
+     * <p>Classifies the gateway failure code, asks the strategy engine for a
+     * decision, audits the decision onto the attempt, and then acts:
+     * <ul>
+     *   <li>{@link DunningDecision#STOP} — cancel remaining attempts, apply terminal status.</li>
+     *   <li>{@link DunningDecision#RETRY_WITH_BACKUP} — queue an immediate backup-PM attempt.</li>
+     *   <li>{@link DunningDecision#EXHAUSTED} — apply terminal status.</li>
+     *   <li>{@link DunningDecision#RETRY} — no special action; scheduled queue proceeds.</li>
+     * </ul>
+     */
+    private void handleFailureWithIntelligence(DunningAttempt attempt, DunningPolicy policy,
+                                               SubscriptionPaymentPreference pref,
+                                               String failureCode) {
+        failAttempt(attempt, "Payment declined: " + failureCode);
 
-        // Try backup PM if eligible: primary just failed, policy allows fallback,
-        // backup PM is configured, and we haven't already tried the backup.
-        boolean canTryBackup = !attempt.isUsedBackupMethod()
-                && policy.isFallbackToBackupPaymentMethod()
-                && pref != null
-                && pref.getBackupPaymentMethodId() != null;
+        FailureCategory category = failureCodeClassifier.classify(failureCode);
+        DunningDecision decision  = dunningStrategyService.decide(attempt, category, policy);
 
-        if (canTryBackup) {
-            DunningAttempt backupAttempt = DunningAttempt.builder()
-                    .subscriptionId(attempt.getSubscriptionId())
-                    .invoiceId(attempt.getInvoiceId())
-                    .attemptNumber(attempt.getAttemptNumber())
-                    .scheduledAt(LocalDateTime.now())
-                    .status(DunningStatus.SCHEDULED)
-                    .dunningPolicyId(policy.getId())
-                    .paymentMethodId(pref.getBackupPaymentMethodId())
-                    .usedBackupMethod(true)
-                    .build();
-            DunningAttempt saved = dunningAttemptRepository.save(backupAttempt);
+        boolean stoppedEarly = (decision == DunningDecision.STOP);
+        String  reason       = buildDecisionReason(decision, category, failureCode);
 
-            Map<String, Object> evt = new java.util.HashMap<>();
-            evt.put("subscriptionId", attempt.getSubscriptionId());
-            evt.put("primaryAttemptId", attempt.getId());
-            evt.put("backupPmId", pref.getBackupPaymentMethodId());
-            if (saved != null && saved.getId() != null) {
-                evt.put("backupAttemptId", saved.getId());
+        // Audit the decision onto the attempt row
+        decisionAuditService.record(attempt.getId(), decision, reason, category, stoppedEarly);
+
+        switch (decision) {
+            case STOP -> {
+                cancelRemainingV2Attempts(attempt.getSubscriptionId(), attempt.getId());
+                checkAndApplyTerminalStatus(attempt.getSubscriptionId(), policy.getId());
+                domainEventLog.record("DUNNING_V2_STOPPED_EARLY", Map.of(
+                        "subscriptionId", attempt.getSubscriptionId(),
+                        "attemptId",      attempt.getId(),
+                        "failureCode",    failureCode != null ? failureCode : "",
+                        "category",       category.name()));
+                log.warn("V2 dunning stopped early for sub {} — non-retryable code='{}' category={}",
+                        attempt.getSubscriptionId(), failureCode, category);
             }
-            domainEventLog.record("DUNNING_V2_BACKUP_QUEUED", evt);
+            case RETRY_WITH_BACKUP -> {
+                Long backupPmId = backupSelector.findBackup(attempt.getSubscriptionId())
+                        .orElse(pref != null ? pref.getBackupPaymentMethodId() : null);
+                if (backupPmId != null) {
+                    DunningAttempt backupAttempt = DunningAttempt.builder()
+                            .subscriptionId(attempt.getSubscriptionId())
+                            .invoiceId(attempt.getInvoiceId())
+                            .attemptNumber(attempt.getAttemptNumber())
+                            .scheduledAt(LocalDateTime.now())
+                            .status(DunningStatus.SCHEDULED)
+                            .dunningPolicyId(policy.getId())
+                            .paymentMethodId(backupPmId)
+                            .usedBackupMethod(true)
+                            .build();
+                    DunningAttempt saved = dunningAttemptRepository.save(backupAttempt);
 
-            log.info("V2 attempt {} failed; queued backup PM {} via attempt {}",
-                    attempt.getId(), pref.getBackupPaymentMethodId(),
-                    saved != null ? saved.getId() : "pending");
-        } else {
-            checkAndApplyTerminalStatus(attempt.getSubscriptionId(), policy.getId());
+                    Map<String, Object> evt = new java.util.HashMap<>();
+                    evt.put("subscriptionId",  attempt.getSubscriptionId());
+                    evt.put("primaryAttemptId", attempt.getId());
+                    evt.put("backupPmId",       backupPmId);
+                    evt.put("failureCategory",  category.name());
+                    if (saved != null && saved.getId() != null) {
+                        evt.put("backupAttemptId", saved.getId());
+                    }
+                    domainEventLog.record("DUNNING_V2_BACKUP_QUEUED", evt);
+                    log.info("V2 attempt {} failed ({}); queued backup PM {} via attempt {}",
+                            attempt.getId(), category, backupPmId,
+                            saved != null ? saved.getId() : "pending");
+                } else {
+                    // Strategy said RETRY_WITH_BACKUP but no backup reachable — stop
+                    checkAndApplyTerminalStatus(attempt.getSubscriptionId(), policy.getId());
+                }
+            }
+            case EXHAUSTED -> checkAndApplyTerminalStatus(attempt.getSubscriptionId(), policy.getId());
+            case RETRY -> { /* scheduled queue will process the next attempt */ }
         }
+    }
+
+    private String buildDecisionReason(DunningDecision decision, FailureCategory category,
+                                       String failureCode) {
+        return switch (decision) {
+            case STOP           -> "Non-retryable failure: code=" + failureCode + " category=" + category;
+            case RETRY_WITH_BACKUP -> "Instrument structurally declined (" + category + "); switching to backup PM";
+            case EXHAUSTED      -> "All scheduled dunning attempts exhausted";
+            case RETRY          -> "Retryable failure (" + category + "); next scheduled attempt will proceed";
+        };
     }
 
     private Long resolvePaymentMethodId(DunningAttempt attempt, SubscriptionPaymentPreference pref) {
@@ -328,5 +390,52 @@ public class DunningServiceV2Impl implements DunningServiceV2 {
                     a.setLastError("Cancelled — earlier attempt succeeded");
                     dunningAttemptRepository.save(a);
                 });
+    }
+
+    // ── forceRetry ────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public DunningAttempt forceRetry(Long merchantId, Long attemptId) {
+        DunningAttempt source = dunningAttemptRepository.findById(attemptId)
+                .orElseThrow(() -> new MembershipException(
+                        "Dunning attempt " + attemptId + " not found",
+                        "DUNNING_ATTEMPT_NOT_FOUND", HttpStatus.NOT_FOUND));
+
+        // Validate that the subscription belongs to this merchant
+        subscriptionV2Repository.findCustomerIdByMerchantIdAndId(merchantId, source.getSubscriptionId())
+                .orElseThrow(() -> new MembershipException(
+                        "Subscription " + source.getSubscriptionId()
+                                + " not found for merchant " + merchantId,
+                        "SUBSCRIPTION_NOT_FOUND", HttpStatus.NOT_FOUND));
+
+        if (source.getStatus() != DunningStatus.FAILED) {
+            throw new MembershipException(
+                    "Attempt " + attemptId + " is not in FAILED state (status=" + source.getStatus() + ")",
+                    "DUNNING_ATTEMPT_NOT_FAILED", HttpStatus.CONFLICT);
+        }
+
+        DunningAttempt retry = DunningAttempt.builder()
+                .subscriptionId(source.getSubscriptionId())
+                .invoiceId(source.getInvoiceId())
+                .attemptNumber(source.getAttemptNumber())
+                .scheduledAt(LocalDateTime.now())
+                .status(DunningStatus.SCHEDULED)
+                .dunningPolicyId(source.getDunningPolicyId())
+                .paymentMethodId(source.getPaymentMethodId())
+                .usedBackupMethod(source.isUsedBackupMethod())
+                .build();
+
+        DunningAttempt saved = dunningAttemptRepository.save(retry);
+
+        domainEventLog.record("DUNNING_V2_FORCE_RETRY", Map.of(
+                "merchantId",      merchantId,
+                "sourceAttemptId", attemptId,
+                "newAttemptId",    saved.getId(),
+                "subscriptionId",  source.getSubscriptionId()));
+
+        log.info("Force-retry: new attempt {} created from source {} for sub {}",
+                saved.getId(), attemptId, source.getSubscriptionId());
+        return saved;
     }
 }

@@ -18,7 +18,7 @@ import com.firstclub.dunning.entity.DunningAttempt.DunningStatus;
 import com.firstclub.dunning.entity.DunningPolicy;
 import com.firstclub.dunning.entity.DunningTerminalStatus;
 import com.firstclub.dunning.port.PaymentGatewayPort;
-import com.firstclub.dunning.port.PaymentGatewayPort.ChargeOutcome;
+import com.firstclub.dunning.port.PaymentGatewayPort.ChargeResult;
 import com.firstclub.dunning.repository.DunningAttemptRepository;
 import com.firstclub.dunning.repository.DunningPolicyRepository;
 import com.firstclub.dunning.service.DunningServiceV2;
@@ -141,7 +141,7 @@ class DunningConcurrencyIT extends PostgresIntegrationTestBase {
     @DisplayName("5 concurrent processDueV2Attempts() on 1 SCHEDULED attempt — gateway charged exactly once (SKIP LOCKED)")
     void concurrentProcess_singleAttemptChargedOnce() throws Exception {
         Mockito.reset(paymentGatewayPort);
-        Mockito.when(paymentGatewayPort.charge(any())).thenReturn(ChargeOutcome.SUCCESS);
+        Mockito.when(paymentGatewayPort.chargeWithCode(any())).thenReturn(ChargeResult.success());
 
         // PAST_DUE subscription
         SubscriptionV2 sub = subscriptionV2Repository.save(SubscriptionV2.builder()
@@ -198,7 +198,7 @@ class DunningConcurrencyIT extends PostgresIntegrationTestBase {
 
         // SKIP LOCKED: only one thread acquired the attempt row.
         // The payment gateway must have been charged exactly once.
-        Mockito.verify(paymentGatewayPort, Mockito.times(1)).charge(any());
+        Mockito.verify(paymentGatewayPort, Mockito.times(1)).chargeWithCode(any());
 
         DunningAttempt updated = dunningAttemptRepository.findById(attempt.getId()).orElseThrow();
         assertThat(updated.getStatus())
@@ -210,7 +210,7 @@ class DunningConcurrencyIT extends PostgresIntegrationTestBase {
     @DisplayName("5 concurrent processDueV2Attempts() on 1 SCHEDULED attempt — charge FAILED is recorded once")
     void concurrentProcess_chargeFailure_recordedOnce() throws Exception {
         Mockito.reset(paymentGatewayPort);
-        Mockito.when(paymentGatewayPort.charge(any())).thenReturn(ChargeOutcome.FAILED);
+        Mockito.when(paymentGatewayPort.chargeWithCode(any())).thenReturn(ChargeResult.failed("card_declined"));
 
         SubscriptionV2 sub = subscriptionV2Repository.save(SubscriptionV2.builder()
                 .merchant(merchant)
@@ -263,7 +263,7 @@ class DunningConcurrencyIT extends PostgresIntegrationTestBase {
         }
 
         // Even on failure, charge must be attempted exactly once.
-        Mockito.verify(paymentGatewayPort, Mockito.times(1)).charge(any());
+        Mockito.verify(paymentGatewayPort, Mockito.times(1)).chargeWithCode(any());
 
         // Attempt must be in a non-SCHEDULED terminal state
         DunningAttempt updated = dunningAttemptRepository.findById(attempt.getId()).orElseThrow();
