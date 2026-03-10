@@ -44,6 +44,23 @@ public class RiskEvent {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    // ── Phase 18: score decay + decision audit ────────────────────────────────
+    /** Raw score at the time the event was recorded (before decay). */
+    @Column(name = "base_score")
+    private Integer baseScore;
+
+    /** Score after half-life time-decay relative to now. */
+    @Column(name = "decayed_score")
+    private Integer decayedScore;
+
+    /** Risk action decided for this event. */
+    @Column(name = "decision", length = 16)
+    private String decision;
+
+    /** JSON array of rule IDs that fired and contributed to this event. */
+    @Column(name = "rule_ids_json", columnDefinition = "TEXT")
+    private String ruleIdsJson;
+
     // ------------------------------------------------------------------
     // Nested enums kept with the entity for colocation convenience
     // ------------------------------------------------------------------

@@ -221,3 +221,109 @@ curl "http://localhost:8080/api/v2/admin/timeline/customer/101?merchantId=1" \
 5. Look up the `customerId` and call `GET /api/v2/admin/timeline/customer/{id}` —
    check for prior disputes or cancellation patterns.
 6. Escalate via the standard risk review process if anomalies are found.
+
+---
+
+## Phase 18: Score Decay, Posture & Explainability
+
+> Added in Phase 18. These features make risk decisions *less static* and give operators
+> more context to act confidently.
+
+### Risk Score Decay
+
+Raw risk scores decay over time using a **half-life formula**:
+
+```
+decayedScore = baseScore × 0.5^(ageHours / halfLifeHours)
+```
+
+Default half-life: **72 hours**.
+
+| Age | Remaining score |
+|---|---|
+| 0 h | 100% |
+| 72 h | ~50% |
+| 144 h | ~25% |
+| 216 h | ~12.5% |
+
+Scores stored in `risk_events.decayed_score` are refreshed via `RiskScoreDecayService.decayAll()`.
+
+### SLA Tracking for Manual Review Cases
+
+Every manual review case now has a `sla_due_at` timestamp set to **24 hours** after creation.
+Cases that breach their SLA without resolution are automatically moved to **ESCALATED** by
+`ManualReviewEscalationService.escalateOverdueCases()`.
+
+Trigger via the API:
+
+```
+POST /api/v2/risk/manual-reviews/escalate-overdue
+Authorization: Bearer <admin-token>
+```
+
+Returns: `{ "escalatedCount": N }`
+
+### Manual Review Quick Actions
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v2/risk/manual-reviews` | List cases (filter by status) |
+| `POST /api/v2/risk/manual-reviews/{id}/approve` | Quick-approve with optional note |
+| `POST /api/v2/risk/manual-reviews/{id}/reject` | Quick-reject with optional note |
+| `POST /api/v2/risk/manual-reviews/{id}/escalate` | Manually escalate with reason |
+| `POST /api/v2/risk/manual-reviews/escalate-overdue` | Auto-escalate all SLA-breached cases |
+
+### Merchant Risk Posture
+
+Get a real-time snapshot of how risky a merchant's traffic has been recently:
+
+```
+GET /api/v2/risk/posture/{merchantId}
+Authorization: Bearer <admin-token>
+```
+
+Sample response:
+```json
+{
+  "merchantId": 1,
+  "recentDecisionCount": 47,
+  "blockCount": 8,
+  "reviewCount": 12,
+  "challengeCount": 4,
+  "allowCount": 23,
+  "avgScore": 42,
+  "dominantAction": "ALLOW"
+}
+```
+
+### Decision Explainability
+
+Fetch a plain-English explanation of why a payment intent received its risk decision:
+
+```
+GET /api/v2/risk/decision-explanations/{paymentIntentId}
+Authorization: Bearer <admin-token>
+```
+
+Sample response:
+```json
+{
+  "paymentIntentId": 100,
+  "decision": "BLOCK",
+  "score": 75,
+  "decayedScore": 53,
+  "triggeredRuleIds": [3, 7],
+  "matchedRules": "[{\"id\":3,...}, {\"id\":7,...}]",
+  "explanation": "Payment intent 100 received decision BLOCK with a risk score of 75. 2 rule(s) fired (IDs: [3, 7]). The decision was recorded 38 minute(s) ago. After time-decay (72-hour half-life) the score is now 53."
+}
+```
+
+### Audit Fields Added to Manual Review Cases
+
+| Column | Populated when |
+|---|---|
+| `sla_due_at` | Case created (= createdAt + 24 h) |
+| `escalated_at` | Case status transitions to ESCALATED |
+| `decision_reason` | Case is resolved (APPROVED / REJECTED / CLOSED) or manually escalated |
+| `closed_by` | Set by operator on resolve (future: populated from JWT subject) |
+| `closed_at` | Case reaches a terminal status (APPROVED / REJECTED / CLOSED) |

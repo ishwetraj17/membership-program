@@ -54,4 +54,25 @@ public class ManualReviewCase {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    // ── Phase 18: SLA, escalation, and close audit fields ─────────────────────
+    /** Deadline by which this case must be resolved (set on creation). */
+    @Column(name = "sla_due_at")
+    private LocalDateTime slaDueAt;
+
+    /** Timestamp when the case was transitioned to ESCALATED. */
+    @Column(name = "escalated_at")
+    private LocalDateTime escalatedAt;
+
+    /** Human-readable reason for the final approve/reject/close decision. */
+    @Column(name = "decision_reason", columnDefinition = "TEXT")
+    private String decisionReason;
+
+    /** User ID (or 0 for system) that closed/approved/rejected the case. */
+    @Column(name = "closed_by")
+    private Long closedBy;
+
+    /** Timestamp of the terminal transition (APPROVED / REJECTED / CLOSED). */
+    @Column(name = "closed_at")
+    private LocalDateTime closedAt;
 }

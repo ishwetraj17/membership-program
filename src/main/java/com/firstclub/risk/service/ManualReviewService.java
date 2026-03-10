@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
 import java.util.Set;
 
 /**
@@ -34,6 +35,9 @@ public class ManualReviewService {
 
     private final ManualReviewCaseRepository caseRepository;
 
+    /** Default SLA window: 24 hours from case creation. */
+    private static final int SLA_HOURS = 24;
+
     // ── Internal creation (called by RiskDecisionService) ─────────────────────
 
     @Transactional
@@ -43,10 +47,11 @@ public class ManualReviewService {
                 .paymentIntentId(paymentIntentId)
                 .customerId(customerId)
                 .status(ReviewCaseStatus.OPEN)
+                .slaDueAt(LocalDateTime.now().plusHours(SLA_HOURS))   // Phase 18: SLA deadline
                 .build();
         ManualReviewCase saved = caseRepository.save(reviewCase);
-        log.info("Manual review case {} created for intent={} merchant={}",
-                saved.getId(), paymentIntentId, merchantId);
+        log.info("Manual review case {} created for intent={} merchant={} slaDueAt={}",
+                saved.getId(), paymentIntentId, merchantId, saved.getSlaDueAt());
         return saved;
     }
 
@@ -76,6 +81,14 @@ public class ManualReviewService {
         ManualReviewCase reviewCase = loadCase(caseId);
         validateTransition(reviewCase.getStatus(), request.getResolution());
         reviewCase.setStatus(request.getResolution());
+        // Phase 18: stamp close audit fields
+        if (terminalStatuses().contains(request.getResolution())) {
+            reviewCase.setClosedAt(LocalDateTime.now());
+            reviewCase.setDecisionReason(request.getNote());
+        }
+        if (request.getResolution() == ReviewCaseStatus.ESCALATED) {
+            reviewCase.setEscalatedAt(LocalDateTime.now());
+        }
         ManualReviewCase updated = caseRepository.save(reviewCase);
         log.info("Manual review case {} resolved → {} for intent={}",
                 caseId, request.getResolution(), reviewCase.getPaymentIntentId());

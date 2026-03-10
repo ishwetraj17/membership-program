@@ -13,11 +13,19 @@ public record ManualReviewCaseResponseDTO(
         ReviewCaseStatus status,
         Long assignedTo,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        // Phase 18 fields
+        LocalDateTime slaDueAt,
+        LocalDateTime escalatedAt,
+        String decisionReason,
+        Long closedBy,
+        LocalDateTime closedAt
 ) {
     public static ManualReviewCaseResponseDTO from(ManualReviewCase c) {
         return new ManualReviewCaseResponseDTO(
                 c.getId(), c.getMerchantId(), c.getPaymentIntentId(), c.getCustomerId(),
-                c.getStatus(), c.getAssignedTo(), c.getCreatedAt(), c.getUpdatedAt());
+                c.getStatus(), c.getAssignedTo(), c.getCreatedAt(), c.getUpdatedAt(),
+                c.getSlaDueAt(), c.getEscalatedAt(), c.getDecisionReason(),
+                c.getClosedBy(), c.getClosedAt());
     }
 }
