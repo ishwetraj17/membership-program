@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -174,6 +175,16 @@ public class RevenueRecognitionPostingServiceImpl implements RevenueRecognitionP
         schedule.setStatus(RevenueRecognitionStatus.POSTED);
         schedule.setLedgerEntryId(entry.getId());
         schedule.setPostingRunId(postingRunId);
+
+        // Phase 15: stamp minor-unit recognized amount for integer reconciliation
+        if (schedule.getAmount() != null) {
+            schedule.setRecognizedAmountMinor(
+                    schedule.getExpectedAmountMinor() != null
+                            ? schedule.getExpectedAmountMinor()
+                            : schedule.getAmount().scaleByPowerOfTen(2)
+                                      .setScale(0, RoundingMode.HALF_UP).longValue());
+        }
+
         scheduleRepository.save(schedule);
 
         log.debug("Posted revenue recognition schedule {} → ledger entry {} (run {})",

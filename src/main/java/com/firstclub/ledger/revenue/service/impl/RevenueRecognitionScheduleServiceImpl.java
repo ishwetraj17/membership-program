@@ -2,6 +2,7 @@ package com.firstclub.ledger.revenue.service.impl;
 
 import com.firstclub.billing.entity.Invoice;
 import com.firstclub.billing.repository.InvoiceRepository;
+import com.firstclub.ledger.revenue.RevenueScheduleAllocator;
 import com.firstclub.ledger.revenue.dto.RevenueRecognitionScheduleResponseDTO;
 import com.firstclub.ledger.revenue.entity.RevenueRecognitionSchedule;
 import com.firstclub.ledger.revenue.entity.RevenueRecognitionStatus;
@@ -15,13 +16,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -32,7 +31,8 @@ import java.util.stream.Collectors;
 public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognitionScheduleService {
 
     private final RevenueRecognitionScheduleRepository scheduleRepository;
-    private final InvoiceRepository invoiceRepository;
+    private final InvoiceRepository                   invoiceRepository;
+    private final RevenueScheduleAllocator             allocator;
 
     @Override
     @Transactional
@@ -70,8 +70,11 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
                     .collect(Collectors.toList());
         }
 
-        List<RevenueRecognitionSchedule> schedules = buildDailySchedule(
-                invoice, startDate, numDays, recognizableAmount, fingerprint, false);
+        List<RevenueRecognitionSchedule> schedules = allocator.allocate(
+                invoice.getId(), invoice.getMerchantId(), invoice.getSubscriptionId(),
+                recognizableAmount,
+                invoice.getCurrency() != null ? invoice.getCurrency() : "INR",
+                startDate, endDate, fingerprint, false);
 
         scheduleRepository.saveAll(schedules);
         log.info("Generated {} revenue recognition rows for invoice {} (merchant {}, subscription {}, fingerprint {})",
@@ -108,8 +111,11 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
 
         String fingerprint = computeFingerprint(invoice);
 
-        List<RevenueRecognitionSchedule> schedules = buildDailySchedule(
-                invoice, startDate, numDays, recognizableAmount, fingerprint, true);
+        List<RevenueRecognitionSchedule> schedules = allocator.allocate(
+                invoice.getId(), invoice.getMerchantId(), invoice.getSubscriptionId(),
+                recognizableAmount,
+                invoice.getCurrency() != null ? invoice.getCurrency() : "INR",
+                startDate, endDate, fingerprint, true);
 
         scheduleRepository.saveAll(schedules);
         log.info("Catch-up regeneration: created {} revenue recognition rows for invoice {} (fingerprint {})",
@@ -210,43 +216,6 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
         }
     }
 
-    /**
-     * Builds a list of daily schedule rows.  The final row absorbs any rounding
-     * residue so that {@code sum(amounts) == recognizableAmount} exactly.
-     */
-    private List<RevenueRecognitionSchedule> buildDailySchedule(
-            Invoice invoice,
-            LocalDate startDate,
-            long numDays,
-            BigDecimal totalAmount,
-            String fingerprint,
-            boolean catchUpRun) {
-
-        BigDecimal dailyAmount = totalAmount.divide(
-                BigDecimal.valueOf(numDays), 4, RoundingMode.HALF_UP);
-
-        // Last day = total - sum of all other days (absorbs rounding residue)
-        BigDecimal lastDayAmount = totalAmount.subtract(
-                dailyAmount.multiply(BigDecimal.valueOf(numDays - 1)));
-
-        List<RevenueRecognitionSchedule> rows = new ArrayList<>((int) numDays);
-        for (long i = 0; i < numDays; i++) {
-            BigDecimal amount = (i == numDays - 1) ? lastDayAmount : dailyAmount;
-            rows.add(RevenueRecognitionSchedule.builder()
-                    .merchantId(invoice.getMerchantId())
-                    .subscriptionId(invoice.getSubscriptionId())
-                    .invoiceId(invoice.getId())
-                    .recognitionDate(startDate.plusDays(i))
-                    .amount(amount)
-                    .currency(invoice.getCurrency() != null ? invoice.getCurrency() : "INR")
-                    .status(RevenueRecognitionStatus.PENDING)
-                    .generationFingerprint(fingerprint)
-                    .catchUpRun(catchUpRun)
-                    .build());
-        }
-        return rows;
-    }
-
     private RevenueRecognitionScheduleResponseDTO toDto(RevenueRecognitionSchedule s) {
         return RevenueRecognitionScheduleResponseDTO.builder()
                 .id(s.getId())
@@ -261,6 +230,12 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
                 .generationFingerprint(s.getGenerationFingerprint())
                 .postingRunId(s.getPostingRunId())
                 .catchUpRun(s.isCatchUpRun())
+                .expectedAmountMinor(s.getExpectedAmountMinor())
+                .recognizedAmountMinor(s.getRecognizedAmountMinor())
+                .roundingAdjustmentMinor(s.getRoundingAdjustmentMinor())
+                .policyCode(s.getPolicyCode())
+                .guardDecision(s.getGuardDecision())
+                .guardReason(s.getGuardReason())
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())
                 .build();

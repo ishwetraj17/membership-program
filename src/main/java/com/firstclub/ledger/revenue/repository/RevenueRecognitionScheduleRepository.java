@@ -88,4 +88,23 @@ public interface RevenueRecognitionScheduleRepository
     BigDecimal sumPostedAmountByMerchantAndDate(
             @Param("merchantId") Long merchantId,
             @Param("date") java.time.LocalDate date);
+
+    // ── Phase 15: guard and drift-check helpers ────────────────────────────────
+
+    /**
+     * Count of PENDING rows for an invoice whose recognitionDate is strictly before
+     * {@code today} — i.e. overdue rows that haven't been posted or skipped yet.
+     * Used by {@link com.firstclub.ledger.revenue.audit.RevenueRecognitionDriftChecker}.
+     */
+    @Query("SELECT COUNT(r) FROM RevenueRecognitionSchedule r " +
+           "WHERE r.invoiceId = :invoiceId " +
+           "AND r.status = com.firstclub.ledger.revenue.entity.RevenueRecognitionStatus.PENDING " +
+           "AND r.recognitionDate < :today")
+    long countOverduePendingByInvoiceId(
+            @Param("invoiceId") Long invoiceId,
+            @Param("today") LocalDate today);
+
+    /** All schedule rows for an invoice ordered by recognition date ascending.
+     *  Useful for ordered audit views and allocation verification. */
+    List<RevenueRecognitionSchedule> findByInvoiceIdOrderByRecognitionDateAsc(Long invoiceId);
 }

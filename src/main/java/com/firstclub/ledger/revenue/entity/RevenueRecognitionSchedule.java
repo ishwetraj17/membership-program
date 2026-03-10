@@ -1,5 +1,7 @@
 package com.firstclub.ledger.revenue.entity;
 
+import com.firstclub.ledger.revenue.guard.GuardDecision;
+import com.firstclub.ledger.revenue.guard.RecognitionPolicyCode;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -116,6 +118,58 @@ public class RevenueRecognitionSchedule {
     @Column(name = "version", nullable = false)
     @Builder.Default
     private Long version = 0L;
+
+    // ── Phase 15: Guard and minor-unit fields ─────────────────────────────────
+
+    /**
+     * The expected recognition amount in minor currency units (e.g. paise).
+     * {@code amount × 100}, rounded to nearest integer.
+     * Set at schedule generation time by {@link com.firstclub.ledger.revenue.RevenueScheduleAllocator}.
+     */
+    @Column(name = "expected_amount_minor")
+    private Long expectedAmountMinor;
+
+    /**
+     * The actual recognized amount in minor currency units.
+     * Set to {@code expected_amount_minor} (or derived from {@code amount}) when
+     * the row is successfully {@code POSTED}.
+     */
+    @Column(name = "recognized_amount_minor")
+    private Long recognizedAmountMinor;
+
+    /**
+     * The rounding remainder absorbed by the last schedule row, in minor units.
+     * Zero for all rows except the final slice in a multi-day schedule.
+     * Enables integer-arithmetic verification: {@code sum(expectedAmountMinor) == invoiceMinorTotal}.
+     */
+    @Column(name = "rounding_adjustment_minor")
+    private Long roundingAdjustmentMinor;
+
+    /**
+     * The {@link RecognitionPolicyCode} applied by the guard at last evaluation.
+     * {@code null} until the guard has evaluated this row (set by
+     * {@link com.firstclub.ledger.revenue.service.impl.RevenueCatchUpServiceImpl}
+     * or the normal posting path).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "policy_code", length = 40)
+    private RecognitionPolicyCode policyCode;
+
+    /**
+     * The {@link GuardDecision} applied by
+     * {@link com.firstclub.ledger.revenue.guard.RevenueRecognitionGuard} at last evaluation.
+     * {@code null} until the guard has evaluated this row.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "guard_decision", length = 20)
+    private GuardDecision guardDecision;
+
+    /**
+     * Human-readable explanation for the guard decision.
+     * Stored for audit and operator dashboards.
+     */
+    @Column(name = "guard_reason", columnDefinition = "TEXT")
+    private String guardReason;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

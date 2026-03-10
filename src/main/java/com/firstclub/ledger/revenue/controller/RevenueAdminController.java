@@ -1,7 +1,9 @@
 package com.firstclub.ledger.revenue.controller;
 
+import com.firstclub.ledger.revenue.dto.RevenueRecognitionRunResponseDTO;
 import com.firstclub.ledger.revenue.dto.RevenueRecognitionScheduleResponseDTO;
 import com.firstclub.ledger.revenue.dto.RevenueWaterfallProjectionDTO;
+import com.firstclub.ledger.revenue.service.RevenueCatchUpService;
 import com.firstclub.ledger.revenue.service.RevenueRecognitionScheduleService;
 import com.firstclub.ledger.revenue.service.RevenueWaterfallProjectionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,8 +35,9 @@ import java.util.List;
 @Tag(name = "Revenue Admin (v2)", description = "Revenue waterfall projections and per-invoice schedule details (Phase 14)")
 public class RevenueAdminController {
 
-    private final RevenueWaterfallProjectionService waterfallService;
-    private final RevenueRecognitionScheduleService scheduleService;
+    private final RevenueWaterfallProjectionService  waterfallService;
+    private final RevenueRecognitionScheduleService   scheduleService;
+    private final RevenueCatchUpService               catchUpService;
 
     // ── Waterfall projection ──────────────────────────────────────────────────
 
@@ -82,12 +85,36 @@ public class RevenueAdminController {
     @GetMapping("/schedules/{invoiceId}")
     @Operation(summary = "Revenue recognition schedules for a specific invoice",
                description = "Returns all schedule rows for the invoice including Phase 14 fields " +
-                             "(generationFingerprint, postingRunId, catchUpRun).")
+                             "(generationFingerprint, postingRunId, catchUpRun) and Phase 15 guard fields.")
     @ApiResponse(responseCode = "200", description = "Schedule rows for the invoice (empty if none generated yet)")
     public ResponseEntity<List<RevenueRecognitionScheduleResponseDTO>> getSchedulesByInvoice(
             @Parameter(description = "Invoice id") @PathVariable Long invoiceId) {
 
         log.debug("GET /api/v2/admin/revenue/schedules/{}", invoiceId);
         return ResponseEntity.ok(scheduleService.listSchedulesByInvoice(invoiceId));
+    }
+
+    // ── Phase 15: catch-up and rebuild ───────────────────────────────────────
+
+    @PostMapping("/post-due")
+    @Operation(summary = "Trigger catch-up posting for all overdue PENDING schedules",
+               description = "Evaluates guard rules for every PENDING schedule whose recognition_date " +
+                             "is on or before today, then posts, defers, or skips each row accordingly.")
+    @ApiResponse(responseCode = "200", description = "Catch-up run summary (scheduled, posted, failed counts)")
+    public ResponseEntity<RevenueRecognitionRunResponseDTO> postDue() {
+        log.info("POST /api/v2/admin/revenue/post-due — triggering catch-up for {}", LocalDate.now());
+        return ResponseEntity.ok(catchUpService.runCatchUp(LocalDate.now()));
+    }
+
+    @PostMapping("/rebuild/{invoiceId}")
+    @Operation(summary = "Force-rebuild revenue recognition schedule for a specific invoice",
+               description = "Deletes all PENDING rows for the invoice and regenerates the schedule " +
+                             "from the current invoice state. POSTED rows are immutable and preserved.")
+    @ApiResponse(responseCode = "200", description = "Newly generated schedule rows")
+    public ResponseEntity<List<RevenueRecognitionScheduleResponseDTO>> rebuild(
+            @Parameter(description = "Invoice id") @PathVariable Long invoiceId) {
+
+        log.info("POST /api/v2/admin/revenue/rebuild/{}", invoiceId);
+        return ResponseEntity.ok(scheduleService.regenerateScheduleForInvoice(invoiceId));
     }
 }

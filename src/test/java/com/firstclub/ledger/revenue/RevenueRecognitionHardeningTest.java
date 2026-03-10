@@ -3,6 +3,7 @@ package com.firstclub.ledger.revenue;
 import com.firstclub.billing.entity.Invoice;
 import com.firstclub.billing.model.InvoiceStatus;
 import com.firstclub.billing.repository.InvoiceRepository;
+import com.firstclub.ledger.revenue.RevenueScheduleAllocator;
 import com.firstclub.ledger.entity.LedgerEntry;
 import com.firstclub.ledger.entity.LedgerEntryType;
 import com.firstclub.ledger.entity.LedgerReferenceType;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -80,6 +82,7 @@ class RevenueRecognitionHardeningTest {
 
         @Mock private RevenueRecognitionScheduleRepository scheduleRepository;
         @Mock private InvoiceRepository invoiceRepository;
+        @Spy  private RevenueScheduleAllocator allocator = new RevenueScheduleAllocator();
         @InjectMocks private RevenueRecognitionScheduleServiceImpl service;
 
         @BeforeEach

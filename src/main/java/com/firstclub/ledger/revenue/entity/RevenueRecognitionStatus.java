@@ -9,5 +9,14 @@ public enum RevenueRecognitionStatus {
     POSTED,
 
     /** Posting attempted but ledger entry failed; eligible for manual review/retry. */
-    FAILED
+    FAILED,
+
+    /**
+     * Posting was blocked by {@link com.firstclub.ledger.revenue.guard.RevenueRecognitionGuard}
+     * due to the subscription or invoice being in a non-billable terminal state
+     * ({@link com.firstclub.ledger.revenue.guard.GuardDecision#BLOCK} or
+     * {@link com.firstclub.ledger.revenue.guard.GuardDecision#HALT}).
+     * The row will not be retried automatically — requires operator action.
+     */
+    SKIPPED
 }

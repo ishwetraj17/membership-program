@@ -1,6 +1,8 @@
 package com.firstclub.ledger.revenue.dto;
 
 import com.firstclub.ledger.revenue.entity.RevenueRecognitionStatus;
+import com.firstclub.ledger.revenue.guard.GuardDecision;
+import com.firstclub.ledger.revenue.guard.RecognitionPolicyCode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -33,6 +35,26 @@ public class RevenueRecognitionScheduleResponseDTO {
 
     /** True when generated via explicit repair / force-regeneration (Phase 14). */
     private boolean catchUpRun;
+
+    // ── Phase 15: guard and minor-unit fields ──────────────────────────────────
+
+    /** Expected recognition amount in minor currency units (e.g. paise). */
+    private Long expectedAmountMinor;
+
+    /** Actual recognized amount in minor units — set when POSTED. */
+    private Long recognizedAmountMinor;
+
+    /** Rounding remainder absorbed by the last row, in minor units. */
+    private Long roundingAdjustmentMinor;
+
+    /** Recognition policy applied by the guard (e.g. RECOGNIZE, SKIP, HALT). */
+    private RecognitionPolicyCode policyCode;
+
+    /** Guard decision (e.g. ALLOW, BLOCK, DEFER, FLAG, HALT). */
+    private GuardDecision guardDecision;
+
+    /** Human-readable explanation for the guard decision. */
+    private String guardReason;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
