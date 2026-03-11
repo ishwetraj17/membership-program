@@ -129,6 +129,7 @@ class ProjectionRebuildServiceTest {
                 .containsExactlyInAnyOrder(
                         "customer_billing_summary", "merchant_daily_kpi",
                         "subscription_status", "invoice_summary",
-                        "payment_summary", "recon_dashboard");
+                        "payment_summary", "recon_dashboard",
+                        "customer_payment_summary", "ledger_balance", "merchant_revenue");
     }
 }

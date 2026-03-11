@@ -41,6 +41,9 @@ public class ProjectionEventListener {
         try {
             projectionUpdateService.applyEventToCustomerBillingProjection(de);
             projectionUpdateService.applyEventToMerchantDailyKpi(de);
+            projectionUpdateService.applyEventToCustomerPaymentSummary(de);
+            projectionUpdateService.applyEventToLedgerBalance(de);
+            projectionUpdateService.applyEventToMerchantRevenue(de);
             opsProjectionUpdateService.applyEventToSubscriptionStatusProjection(de);
             opsProjectionUpdateService.applyEventToInvoiceSummaryProjection(de);
             opsProjectionUpdateService.applyEventToPaymentSummaryProjection(de);

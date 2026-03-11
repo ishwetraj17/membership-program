@@ -5,8 +5,10 @@ import com.firstclub.reporting.projections.entity.MerchantKpiProjectionId;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface MerchantDailyKpiProjectionRepository
@@ -30,4 +32,7 @@ public interface MerchantDailyKpiProjectionRepository
     @Deprecated
     Page<MerchantDailyKpiProjection> findByBusinessDateBetweenOrderByMerchantIdAscBusinessDateAsc(
             LocalDate from, LocalDate to, Pageable pageable);
+
+    @Query("SELECT MIN(p.updatedAt) FROM MerchantDailyKpiProjection p")
+    Optional<LocalDateTime> findOldestUpdatedAt();
 }

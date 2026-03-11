@@ -13,13 +13,17 @@ import com.firstclub.reporting.ops.repository.InvoiceSummaryProjectionRepository
 import com.firstclub.reporting.ops.repository.PaymentSummaryProjectionRepository;
 import com.firstclub.reporting.ops.repository.ReconDashboardProjectionRepository;
 import com.firstclub.reporting.ops.repository.SubscriptionStatusProjectionRepository;
+import com.firstclub.reporting.projections.dto.ConsistencyReport;
 import com.firstclub.reporting.projections.dto.CustomerBillingSummaryProjectionDTO;
 import com.firstclub.reporting.projections.dto.MerchantDailyKpiProjectionDTO;
+import com.firstclub.reporting.projections.dto.ProjectionLagReport;
 import com.firstclub.reporting.projections.dto.RebuildResponseDTO;
 import com.firstclub.reporting.projections.entity.CustomerBillingSummaryProjection;
 import com.firstclub.reporting.projections.entity.MerchantDailyKpiProjection;
 import com.firstclub.reporting.projections.repository.CustomerBillingSummaryProjectionRepository;
 import com.firstclub.reporting.projections.repository.MerchantDailyKpiProjectionRepository;
+import com.firstclub.reporting.projections.service.ProjectionConsistencyChecker;
+import com.firstclub.reporting.projections.service.ProjectionLagMonitor;
 import com.firstclub.reporting.projections.service.ProjectionRebuildService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -35,6 +39,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.Map;
 
 /**
  * Admin reads against the pre-computed projection tables.
@@ -55,6 +60,8 @@ public class ProjectionAdminController {
     private final CustomerBillingSummaryProjectionRepository  billingSummaryRepo;
     private final MerchantDailyKpiProjectionRepository        kpiRepo;
     private final ProjectionRebuildService                    projectionRebuildService;
+    private final ProjectionLagMonitor                        lagMonitor;
+    private final ProjectionConsistencyChecker                consistencyChecker;
 
     private final SubscriptionStatusProjectionRepository   subStatusRepo;
     private final InvoiceSummaryProjectionRepository       invoiceSummaryRepo;
@@ -284,10 +291,52 @@ public class ProjectionAdminController {
                     projectionRebuildService.rebuildPaymentSummaryProjection();
             case "recon_dashboard" ->
                     projectionRebuildService.rebuildReconDashboardProjection();
+            case "customer_payment_summary" ->
+                    projectionRebuildService.rebuildCustomerPaymentSummaryProjection();
+            case "ledger_balance" ->
+                    projectionRebuildService.rebuildLedgerBalanceProjection();
+            case "merchant_revenue" ->
+                    projectionRebuildService.rebuildMerchantRevenueProjection();
             default -> throw new MembershipException(
                     "Unsupported projection: " + projectionName, "UNSUPPORTED_PROJECTION");
         };
 
         return ResponseEntity.ok(result);
+    }
+
+    // ── Lag monitoring (Phase 19) ─────────────────────────────────────────────
+
+    @Operation(summary = "Get staleness lag for all projections",
+               description = "Returns the oldest updated_at and lag in seconds for each known projection table.")
+    @GetMapping("/lag")
+    public ResponseEntity<Map<String, ProjectionLagReport>> getAllLag() {
+        return ResponseEntity.ok(lagMonitor.checkAllProjections());
+    }
+
+    @Operation(summary = "Get staleness lag for a single projection",
+               description = "Returns lag info for the named projection.")
+    @GetMapping("/lag/{projectionName}")
+    public ResponseEntity<ProjectionLagReport> getLag(
+            @Parameter(description = "Projection name") @PathVariable String projectionName) {
+        return ResponseEntity.ok(lagMonitor.getLag(projectionName));
+    }
+
+    // ── Consistency checks (Phase 19) ─────────────────────────────────────────
+
+    @Operation(summary = "Run consistency check for customer_payment_summary",
+               description = "Compares successfulPayments counter in projection vs live PaymentIntentV2 count.")
+    @GetMapping("/consistency/customer-payment-summary")
+    public ResponseEntity<ConsistencyReport> checkCustomerPaymentSummary(
+            @Parameter(description = "Merchant ID") @RequestParam Long merchantId,
+            @Parameter(description = "Customer ID") @RequestParam Long customerId) {
+        return ResponseEntity.ok(consistencyChecker.checkCustomerPaymentSummary(merchantId, customerId));
+    }
+
+    @Operation(summary = "Run consistency check for merchant_revenue",
+               description = "Compares activeSubscriptions counter in projection vs live SubscriptionV2 count.")
+    @GetMapping("/consistency/merchant-revenue")
+    public ResponseEntity<ConsistencyReport> checkMerchantRevenue(
+            @Parameter(description = "Merchant ID") @RequestParam Long merchantId) {
+        return ResponseEntity.ok(consistencyChecker.checkMerchantRevenue(merchantId));
     }
 }

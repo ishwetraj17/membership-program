@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface ReconDashboardProjectionRepository
@@ -27,4 +28,7 @@ public interface ReconDashboardProjectionRepository
     Page<ReconDashboardProjection> findWithFilters(@Param("merchantId") Long merchantId, Pageable pageable);
 
     Page<ReconDashboardProjection> findByBusinessDateBetween(LocalDate from, LocalDate to, Pageable pageable);
+
+    @Query("SELECT MIN(p.updatedAt) FROM ReconDashboardProjection p")
+    Optional<LocalDateTime> findOldestUpdatedAt();
 }

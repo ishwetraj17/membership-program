@@ -14,6 +14,9 @@ import com.firstclub.reporting.ops.repository.ReconDashboardProjectionRepository
 import com.firstclub.reporting.ops.repository.SubscriptionStatusProjectionRepository;
 import com.firstclub.reporting.ops.service.OpsProjectionUpdateService;
 import com.firstclub.reporting.projections.dto.RebuildResponseDTO;
+import com.firstclub.reporting.projections.repository.CustomerPaymentSummaryProjectionRepository;
+import com.firstclub.reporting.projections.repository.LedgerBalanceProjectionRepository;
+import com.firstclub.reporting.projections.repository.MerchantRevenueProjectionRepository;
 import com.firstclub.reporting.projections.repository.CustomerBillingSummaryProjectionRepository;
 import com.firstclub.reporting.projections.repository.MerchantDailyKpiProjectionRepository;
 import com.firstclub.subscription.entity.SubscriptionV2;
@@ -49,7 +52,10 @@ public class ProjectionRebuildService {
             "subscription_status",
             "invoice_summary",
             "payment_summary",
-            "recon_dashboard"
+            "recon_dashboard",
+            "customer_payment_summary",
+            "ledger_balance",
+            "merchant_revenue"
     );
 
     private final DomainEventRepository                       domainEventRepository;
@@ -66,6 +72,9 @@ public class ProjectionRebuildService {
     private final PaymentSummaryProjectionRepository    paymentSummaryRepo;
     private final ReconDashboardProjectionRepository    reconDashboardRepo;
     private final OpsProjectionUpdateService            opsProjectionUpdateService;
+    private final CustomerPaymentSummaryProjectionRepository customerPaymentRepo;
+    private final LedgerBalanceProjectionRepository          ledgerBalanceRepo;
+    private final MerchantRevenueProjectionRepository        merchantRevenueRepo;
 
     /**
      * Truncate and rebuild the {@code customer_billing_summary_projection} table.
@@ -200,6 +209,77 @@ public class ProjectionRebuildService {
         return RebuildResponseDTO.builder()
                 .projectionName("recon_dashboard")
                 .eventsProcessed(reports.size())
+                .recordsInProjection(records)
+                .rebuiltAt(LocalDateTime.now())
+                .build();
+    }
+
+    // ── Phase 19 projections ──────────────────────────────────────────────────
+
+    /**
+     * Truncate and rebuild the {@code customer_payment_summary_projection}
+     * table by replaying all domain events.
+     */
+    @Transactional
+    public RebuildResponseDTO rebuildCustomerPaymentSummaryProjection() {
+        log.info("Starting rebuild of customer_payment_summary_projection");
+        customerPaymentRepo.deleteAllInBatch();
+        List<DomainEvent> events = domainEventRepository.findAll();
+        for (DomainEvent event : events) {
+            projectionUpdateService.applyEventToCustomerPaymentSummary(event);
+        }
+        long records = customerPaymentRepo.count();
+        log.info("customer_payment_summary_projection rebuild complete: {} events, {} records",
+                events.size(), records);
+        return RebuildResponseDTO.builder()
+                .projectionName("customer_payment_summary")
+                .eventsProcessed(events.size())
+                .recordsInProjection(records)
+                .rebuiltAt(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * Truncate and rebuild the {@code ledger_balance_projection}
+     * table by replaying all domain events.
+     */
+    @Transactional
+    public RebuildResponseDTO rebuildLedgerBalanceProjection() {
+        log.info("Starting rebuild of ledger_balance_projection");
+        ledgerBalanceRepo.deleteAllInBatch();
+        List<DomainEvent> events = domainEventRepository.findAll();
+        for (DomainEvent event : events) {
+            projectionUpdateService.applyEventToLedgerBalance(event);
+        }
+        long records = ledgerBalanceRepo.count();
+        log.info("ledger_balance_projection rebuild complete: {} events, {} records",
+                events.size(), records);
+        return RebuildResponseDTO.builder()
+                .projectionName("ledger_balance")
+                .eventsProcessed(events.size())
+                .recordsInProjection(records)
+                .rebuiltAt(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * Truncate and rebuild the {@code merchant_revenue_projection}
+     * table by replaying all domain events.
+     */
+    @Transactional
+    public RebuildResponseDTO rebuildMerchantRevenueProjection() {
+        log.info("Starting rebuild of merchant_revenue_projection");
+        merchantRevenueRepo.deleteAllInBatch();
+        List<DomainEvent> events = domainEventRepository.findAll();
+        for (DomainEvent event : events) {
+            projectionUpdateService.applyEventToMerchantRevenue(event);
+        }
+        long records = merchantRevenueRepo.count();
+        log.info("merchant_revenue_projection rebuild complete: {} events, {} records",
+                events.size(), records);
+        return RebuildResponseDTO.builder()
+                .projectionName("merchant_revenue")
+                .eventsProcessed(events.size())
                 .recordsInProjection(records)
                 .rebuiltAt(LocalDateTime.now())
                 .build();
