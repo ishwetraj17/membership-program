@@ -3,6 +3,7 @@ package com.firstclub.billing.service;
 import com.firstclub.billing.dto.InvoiceDTO;
 import com.firstclub.billing.dto.InvoiceLineDTO;
 import com.firstclub.billing.entity.*;
+import com.firstclub.billing.guard.InvoicePeriodGuard;
 import com.firstclub.billing.model.InvoiceStatus;
 import com.firstclub.billing.repository.*;
 import com.firstclub.membership.entity.*;
@@ -53,6 +54,7 @@ public class InvoiceService {
     private final OutboxService             outboxService;
     private final DomainEventLog            domainEventLog;
     private final InvoiceTotalService       invoiceTotalService;
+    private final InvoicePeriodGuard        invoicePeriodGuard;
 
     /** Injected lazily to avoid circular-dependency issues between billing and ledger. */
     @Autowired @Lazy
@@ -83,6 +85,9 @@ public class InvoiceService {
 
         MembershipPlan plan = planRepository.findById(planId)
                 .orElseThrow(() -> new MembershipException("Plan not found: " + planId, "PLAN_NOT_FOUND"));
+
+        // Guard: reject duplicate-period invoices for the same subscription
+        invoicePeriodGuard.assertNoPeriodOverlap(subscriptionId, periodStart, periodEnd);
 
         // Persist the invoice skeleton
         Invoice invoice = Invoice.builder()

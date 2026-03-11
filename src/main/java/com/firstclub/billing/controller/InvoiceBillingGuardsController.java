@@ -11,7 +11,9 @@ import com.firstclub.billing.repository.InvoiceRepository;
 import com.firstclub.billing.service.InvoiceService;
 import com.firstclub.membership.exception.MembershipException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -31,6 +33,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v2")
 @RequiredArgsConstructor
+@Slf4j
+@PreAuthorize("hasRole('ADMIN')")
 public class InvoiceBillingGuardsController {
 
     private final InvoiceRebuildService invoiceRebuildService;
@@ -55,6 +59,16 @@ public class InvoiceBillingGuardsController {
 
         String rebuiltBy = principal != null ? principal.getName() : "anonymous";
         InvoiceDTO result = invoiceRebuildService.rebuildTotals(invoiceId, rebuiltBy);
+
+        // Post-rebuild invariant check — validates the rebuild corrected any mismatch.
+        // Logged as a warning rather than thrown so the already-persisted rebuild is preserved.
+        invoiceRepository.findById(invoiceId).ifPresent(inv -> {
+            try {
+                invoiceInvariantService.assertTotalMatchesLines(inv);
+            } catch (Exception e) {
+                log.warn("Post-rebuild invariant still violated on invoice {}: {}", invoiceId, e.getMessage());
+            }
+        });
         return ResponseEntity.ok(result);
     }
 

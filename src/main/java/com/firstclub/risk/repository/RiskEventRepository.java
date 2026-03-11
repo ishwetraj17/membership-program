@@ -12,6 +12,9 @@ public interface RiskEventRepository extends JpaRepository<RiskEvent, Long> {
 
     List<RiskEvent> findAllByOrderByCreatedAtDesc();
 
+    /** Returns all events that have been assigned a base score (eligible for decay refresh). */
+    List<RiskEvent> findByBaseScoreIsNotNull();
+
     /**
      * Count payment-attempt events for a user within a time window.
      * Used for per-user velocity checking.
