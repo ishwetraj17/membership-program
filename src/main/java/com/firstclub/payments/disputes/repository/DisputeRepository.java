@@ -54,5 +54,11 @@ public interface DisputeRepository extends JpaRepository<Dispute, Long> {
      * Used by {@code DisputeDueDateCheckerService} and the admin due-soon endpoint.
      */
     List<Dispute> findByStatusInAndDueByBefore(List<DisputeStatus> statuses, LocalDateTime cutoff);
+
+    /** Count of disputes matching a single status — used by observability gauges. */
+    long countByStatus(DisputeStatus status);
+
+    /** Count of disputes matching any of the given statuses — used by observability gauges. */
+    long countByStatusIn(java.util.Collection<DisputeStatus> statuses);
 }
 
