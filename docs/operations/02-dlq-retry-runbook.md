@@ -587,3 +587,37 @@ These thresholds should feed into alerting once an observability stack is config
    → Date/time, root cause, affected event types, replay action taken
    → Add to incident log
 ```
+
+---
+
+## Phase 20 — Ops Command Center requeue endpoint
+
+Phase 20 adds a dedicated ops endpoint at `/ops/dlq/{id}/requeue` that wraps the
+DLQ retry with **automatic timeline recording**:
+
+```
+POST /ops/dlq/{id}/requeue
+    ?merchantId=<merchantId>
+    &actorUserId=<yourUserId>
+    &reason=<free text explanation>
+```
+
+**What it does over the existing retry:**
+1. Re-enqueues the DLQ entry exactly as before.
+2. Writes a `repair.dlq_requeue` timeline event on the entity timeline so ops
+   can see who requeued it and when (searchable via `GET /ops/timeline`).
+
+**Expected HTTP 200 response:**
+```json
+{
+  "repairKey": "repair.dlq.requeue",
+  "success": true,
+  "dryRun": false,
+  "details": "DLQ message 42 re-enqueued (outbox eventType=SUBSCRIPTION_CREATED)"
+}
+```
+
+Use the legacy `/api/v2/admin/system/dlq/{id}/retry` endpoint for scripted bulk
+operations where timeline annotation is not required, and the new
+`/ops/dlq/{id}/requeue` for interactive manual repairs where an audit trail is
+important.

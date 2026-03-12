@@ -1,0 +1,30 @@
+feat(phase20): ops timeline, support cases, and manual repair actions
+
+Phase 20 adds unified ops debuggability — entity timelines enriched with
+manual repair events, a command center API for all repair operations, and
+structured support case note management.
+
+New packages:
+- com.firstclub.ops.timeline: TimelineEventFactory (7 factory methods,
+  16 event-type constants) + OpsTimelineService facade (exceptions swallowed)
+- com.firstclub.ops.repair: ManualRepairService — dispatches to
+  RepairActionRegistry for outbox/webhook/recon/invoice/ledger, delegates
+  directly to DlqOpsService and AdvancedReconciliationService, writes audit
+  via RepairAuditService and timeline side-effect via OpsTimelineService
+- com.firstclub.ops.repair.controller: OpsCommandController — 8 endpoints
+  under /ops/ (GET timeline, POST retry/rerun/rebuild/requeue/acknowledge)
+- com.firstclub.support.service: SupportNoteService — addNote (with CLOSED
+  guard), listNotes, listVisibleNotes(visibility)
+- com.firstclub.support.controller: SupportController — 4 endpoints under
+  /support/cases including visibility-filtered note retrieval
+
+Database migration V66: adds customer_id/created_by/assigned_to to
+support_cases; adds request_id to ops_timeline_events.
+
+Tests: Phase20OpsTimelineTests — 35 unit tests (TimelineFactory x8,
+OpsTimelineService x4, ManualRepairService x13, SupportNoteService x10).
+
+Docs: new docs/operations/10-support-timeline.md; Phase 20 section appended
+to docs/operations/02-dlq-retry-runbook.md.
+
+Tests: 1970 passed, 0 failed (+31 vs Phase 19)
