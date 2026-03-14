@@ -80,7 +80,7 @@ class IdempotencyFilterTest {
         IdempotencyFilter filter = new IdempotencyFilter(idempotencyService, redisStore, mapper);
 
         // Inject the mocked RequestMappingHandlerMapping into the filter's lazy field.
-        ReflectionTestUtils.setField(filter, "requestMappingHandlerMapping", handlerMapping);
+        ReflectionTestUtils.setField(filter, "resolvedHandlerMapping", handlerMapping);
 
         // Stub the handler mapping to return the @Idempotent-annotated method for all requests.
         Method createSub = SubscriptionV2Controller.class.getDeclaredMethod(
