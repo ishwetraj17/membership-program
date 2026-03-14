@@ -64,6 +64,7 @@ public class JwtTokenProvider {
             keyBytes = Base64.getDecoder().decode(jwtSecret);
         } catch (IllegalArgumentException e) {
             // Secret is not valid Base64 — treat it as a raw UTF-8 string
+            log.warn("JWT secret is not valid Base64; using raw UTF-8 bytes");
             keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
         }
         return Keys.hmacShaKeyFor(keyBytes);
