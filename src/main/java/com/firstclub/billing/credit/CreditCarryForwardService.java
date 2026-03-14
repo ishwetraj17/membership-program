@@ -127,7 +127,7 @@ public class CreditCarryForwardService {
             BigDecimal apply = noteBalance.min(remaining);
 
             note.setUsedAmount(note.getUsedAmount().add(apply));
-            note.setAvailableAmountMinor(toMinorUnits(note.getAvailableBalance().subtract(apply).max(BigDecimal.ZERO)));
+            note.setAvailableAmountMinor(toMinorUnits(note.getAvailableBalance().max(BigDecimal.ZERO)));
             creditNoteRepository.save(note);
 
             remaining = remaining.subtract(apply);

@@ -7,8 +7,11 @@ import com.firstclub.billing.dto.InvoiceSummaryDTO;
 import com.firstclub.billing.entity.*;
 import com.firstclub.billing.model.InvoiceStatus;
 import com.firstclub.billing.repository.DiscountRepository;
+import com.firstclub.billing.repository.InvoiceLineRepository;
 import com.firstclub.billing.repository.InvoiceRepository;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -31,16 +34,34 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private InvoiceRepository invoiceRepository;
+    @Autowired private InvoiceLineRepository invoiceLineRepository;
     @Autowired private DiscountRepository discountRepository;
 
     private static final long MERCHANT_ID = 2001L;
     private static final long USER_ID     = 9001L;
     private static final long CUSTOMER_ID = 8001L;
+    private String adminToken;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
+    }
+
     private Invoice createOpenInvoice(String amount) {
-        return invoiceRepository.save(Invoice.builder()
+        Invoice invoice = invoiceRepository.save(Invoice.builder()
                 .userId(USER_ID).merchantId(MERCHANT_ID)
                 .status(InvoiceStatus.OPEN)
                 .currency("INR")
@@ -50,6 +71,14 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
                 .taxTotal(BigDecimal.ZERO).grandTotal(new BigDecimal(amount))
                 .dueDate(LocalDateTime.now().plusDays(7))
                 .build());
+        // Create a PLAN_CHARGE line so recomputeTotals() can derive the subtotal
+        invoiceLineRepository.save(InvoiceLine.builder()
+                .invoiceId(invoice.getId())
+                .lineType(InvoiceLineType.PLAN_CHARGE)
+                .description("Plan charge")
+                .amount(new BigDecimal(amount))
+                .build());
+        return invoice;
     }
 
     private Discount createActiveFixedDiscount(String code, String value) {
@@ -79,8 +108,9 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
         ApplyDiscountRequestDTO req = ApplyDiscountRequestDTO.builder()
                 .code("SAVE100").customerId(CUSTOMER_ID).build();
 
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.postForEntity(
-                invoiceUrl(invoice.getId()) + "/apply-discount", req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/apply-discount", HttpMethod.POST,
+                new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -105,8 +135,9 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
         ApplyDiscountRequestDTO req = ApplyDiscountRequestDTO.builder()
                 .code("PAID_TEST").customerId(CUSTOMER_ID).build();
 
-        ResponseEntity<String> resp = restTemplate.postForEntity(
-                invoiceUrl(invoice.getId()) + "/apply-discount", req, String.class);
+        ResponseEntity<String> resp = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/apply-discount", HttpMethod.POST,
+                new HttpEntity<>(req, authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()
                 || resp.getStatusCode().is5xxServerError()).isTrue();
@@ -125,13 +156,15 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
                 .code("ONCE_ONLY").customerId(CUSTOMER_ID).build();
 
         // First application — must succeed
-        ResponseEntity<InvoiceSummaryDTO> first = restTemplate.postForEntity(
-                invoiceUrl(invoice.getId()) + "/apply-discount", req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> first = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/apply-discount", HttpMethod.POST,
+                new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         // Second application — must fail
-        ResponseEntity<String> second = restTemplate.postForEntity(
-                invoiceUrl(invoice.getId()) + "/apply-discount", req, String.class);
+        ResponseEntity<String> second = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/apply-discount", HttpMethod.POST,
+                new HttpEntity<>(req, authHeaders()), String.class);
         assertThat(second.getStatusCode().is4xxClientError()
                 || second.getStatusCode().is5xxServerError()).isTrue();
     }
@@ -144,8 +177,9 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
     void getSummary_openInvoice_returnsFullBreakdown() {
         Invoice invoice = createOpenInvoice("1500.00");
 
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.getForEntity(
-                invoiceUrl(invoice.getId()) + "/summary", InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/summary", HttpMethod.GET,
+                new HttpEntity<>(authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -165,9 +199,9 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
         Invoice invoice = createOpenInvoice("800.00"); // belongs to MERCHANT_ID=2001
 
         // Try with a different merchantId
-        ResponseEntity<String> resp = restTemplate.getForEntity(
+        ResponseEntity<String> resp = restTemplate.exchange(
                 "/api/v2/merchants/9999/invoices/" + invoice.getId() + "/summary",
-                String.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()
                 || resp.getStatusCode().is5xxServerError()).isTrue();
@@ -192,8 +226,9 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
         ApplyDiscountRequestDTO req = ApplyDiscountRequestDTO.builder()
                 .code("PCT10_TEST").customerId(CUSTOMER_ID).build();
 
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.postForEntity(
-                invoiceUrl(invoice.getId()) + "/apply-discount", req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                invoiceUrl(invoice.getId()) + "/apply-discount", HttpMethod.POST,
+                new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getGrandTotal())

@@ -5,6 +5,8 @@ import com.firstclub.billing.dto.DiscountResponseDTO;
 import com.firstclub.billing.entity.DiscountStatus;
 import com.firstclub.billing.entity.DiscountType;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -33,9 +35,26 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
 
     private static final long MERCHANT_ID = 1001L;
     private Long createdDiscountId;
+    private String adminToken;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+    }
 
     private String baseUrl() {
         return "/api/v2/merchants/" + MERCHANT_ID + "/discounts";
+    }
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
     }
 
     private DiscountCreateRequestDTO validFixedRequest(String code) {
@@ -55,8 +74,9 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
     @Order(1)
     @DisplayName("POST /discounts — valid request returns 201 and ACTIVE status")
     void createDiscount_validRequest_returns201() {
-        ResponseEntity<DiscountResponseDTO> resp = restTemplate.postForEntity(
-                baseUrl(), validFixedRequest("WELCOME100"), DiscountResponseDTO.class);
+        ResponseEntity<DiscountResponseDTO> resp = restTemplate.exchange(
+                baseUrl(), HttpMethod.POST, new HttpEntity<>(validFixedRequest("WELCOME100"), authHeaders()),
+                DiscountResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(resp.getBody()).isNotNull();
@@ -75,10 +95,12 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
     @DisplayName("GET /discounts — returns list containing the created discount")
     void listDiscounts_afterCreate_containsDiscount() {
         // ensure discount exists first
-        restTemplate.postForEntity(baseUrl(), validFixedRequest("LIST_TEST"), DiscountResponseDTO.class);
+        restTemplate.exchange(baseUrl(), HttpMethod.POST,
+                new HttpEntity<>(validFixedRequest("LIST_TEST"), authHeaders()),
+                DiscountResponseDTO.class);
 
         ResponseEntity<List<DiscountResponseDTO>> resp = restTemplate.exchange(
-                baseUrl(), HttpMethod.GET, null,
+                baseUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()),
                 new ParameterizedTypeReference<>() {});
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -93,12 +115,14 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
     @Order(3)
     @DisplayName("GET /discounts/{id} — returns correct discount")
     void getDiscount_byId_returnsDiscount() {
-        ResponseEntity<DiscountResponseDTO> created = restTemplate.postForEntity(
-                baseUrl(), validFixedRequest("GET_BY_ID_TEST"), DiscountResponseDTO.class);
+        ResponseEntity<DiscountResponseDTO> created = restTemplate.exchange(
+                baseUrl(), HttpMethod.POST, new HttpEntity<>(validFixedRequest("GET_BY_ID_TEST"), authHeaders()),
+                DiscountResponseDTO.class);
         Long id = created.getBody().getId();
 
-        ResponseEntity<DiscountResponseDTO> resp = restTemplate.getForEntity(
-                baseUrl() + "/" + id, DiscountResponseDTO.class);
+        ResponseEntity<DiscountResponseDTO> resp = restTemplate.exchange(
+                baseUrl() + "/" + id, HttpMethod.GET, new HttpEntity<>(authHeaders()),
+                DiscountResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getId()).isEqualTo(id);
@@ -111,10 +135,14 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
     @Order(4)
     @DisplayName("POST /discounts — duplicate code for same merchant returns 5xx/4xx")
     void createDiscount_duplicateCode_returnsError() {
-        restTemplate.postForEntity(baseUrl(), validFixedRequest("DUPE"), DiscountResponseDTO.class);
+        restTemplate.exchange(baseUrl(), HttpMethod.POST,
+                new HttpEntity<>(validFixedRequest("DUPE"), authHeaders()),
+                DiscountResponseDTO.class);
 
-        ResponseEntity<String> resp = restTemplate.postForEntity(
-                baseUrl(), validFixedRequest("DUPE"), String.class);
+        ResponseEntity<String> resp = restTemplate.exchange(
+                baseUrl(), HttpMethod.POST,
+                new HttpEntity<>(validFixedRequest("DUPE"), authHeaders()),
+                String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()
                 || resp.getStatusCode().is5xxServerError()).isTrue();
@@ -134,7 +162,9 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
                 .validTo(LocalDateTime.now().plusDays(30))
                 .build();
 
-        ResponseEntity<String> resp = restTemplate.postForEntity(baseUrl(), req, String.class);
+        ResponseEntity<String> resp = restTemplate.exchange(
+                baseUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()),
+                String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()
                 || resp.getStatusCode().is5xxServerError()).isTrue();
@@ -154,8 +184,9 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
                 .validTo(LocalDateTime.now().plusDays(30))
                 .build();
 
-        ResponseEntity<DiscountResponseDTO> resp = restTemplate.postForEntity(
-                baseUrl(), req, DiscountResponseDTO.class);
+        ResponseEntity<DiscountResponseDTO> resp = restTemplate.exchange(
+                baseUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()),
+                DiscountResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(resp.getBody().getDiscountType()).isEqualTo(DiscountType.PERCENTAGE);

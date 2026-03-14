@@ -68,21 +68,31 @@ public class RefundServiceV2Impl implements RefundServiceV2 {
     @Transactional
     public RefundV2ResponseDTO createRefund(Long merchantId, Long paymentId, RefundCreateRequestDTO request) {
 
-        // 0. Compute or accept idempotency fingerprint BEFORE acquiring any lock
-        String fingerprint = (request.getRequestFingerprint() != null && !request.getRequestFingerprint().isBlank())
+        // 0. Determine idempotency fingerprint.
+        //    When the caller supplies an explicit fingerprint we use it for deduplication.
+        //    When absent we generate a unique-per-invocation fingerprint so that
+        //    multiple independent refund requests with identical parameters are NOT
+        //    silently collapsed — the pessimistic lock guards against over-refunding.
+        boolean callerSuppliedFingerprint =
+                request.getRequestFingerprint() != null && !request.getRequestFingerprint().isBlank();
+        String fingerprint = callerSuppliedFingerprint
                 ? request.getRequestFingerprint()
-                : computeFingerprint(merchantId, paymentId, request.getAmount(), request.getReasonCode());
+                : computeFingerprint(merchantId, paymentId, request.getAmount(),
+                        request.getReasonCode() + ":" + java.util.UUID.randomUUID());
 
-        // 0a. Fast-path idempotency check: if fingerprint already exists, return existing refund
-        Optional<RefundV2> existing = refundV2Repository.findByRequestFingerprint(fingerprint);
-        if (existing.isPresent()) {
-            log.info("Refund V2 fingerprint replay — returning existing refundId={} for paymentId={}",
-                    existing.get().getId(), paymentId);
-            Payment payment = paymentRepository.findById(existing.get().getPaymentId())
-                    .orElseThrow(() -> new MembershipException(
-                            "Parent payment not found: " + existing.get().getPaymentId(),
-                            "PAYMENT_NOT_FOUND", HttpStatus.NOT_FOUND));
-            return toDto(existing.get(), payment);
+        // 0a. Fast-path idempotency check — only when the caller explicitly
+        //     provided a fingerprint (deliberate replay protection).
+        if (callerSuppliedFingerprint) {
+            Optional<RefundV2> existing = refundV2Repository.findByRequestFingerprint(fingerprint);
+            if (existing.isPresent()) {
+                log.info("Refund V2 fingerprint replay — returning existing refundId={} for paymentId={}",
+                        existing.get().getId(), paymentId);
+                Payment payment = paymentRepository.findById(existing.get().getPaymentId())
+                        .orElseThrow(() -> new MembershipException(
+                                "Parent payment not found: " + existing.get().getPaymentId(),
+                                "PAYMENT_NOT_FOUND", HttpStatus.NOT_FOUND));
+                return toDto(existing.get(), payment);
+            }
         }
 
         // 0b. Optional Redis pre-lock (supplements SELECT FOR UPDATE to reduce DB contention)

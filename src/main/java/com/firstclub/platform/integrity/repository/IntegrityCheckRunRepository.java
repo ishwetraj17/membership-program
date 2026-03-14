@@ -2,9 +2,11 @@ package com.firstclub.platform.integrity.repository;
 
 import com.firstclub.platform.integrity.entity.IntegrityCheckRun;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
+@Repository("platformIntegrityCheckRunRepository")
 public interface IntegrityCheckRunRepository extends JpaRepository<IntegrityCheckRun, Long> {
 
     List<IntegrityCheckRun> findAllByOrderByStartedAtDesc();

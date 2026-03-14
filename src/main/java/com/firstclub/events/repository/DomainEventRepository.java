@@ -31,16 +31,26 @@ public interface DomainEventRepository extends JpaRepository<DomainEvent, Long> 
 
     // ── V29 — flexible admin query with optional filters ─────────────────────
 
-    @Query("""
-            SELECT e FROM DomainEvent e
-            WHERE (:merchantId   IS NULL OR e.merchantId   = :merchantId)
-              AND (:eventType    IS NULL OR e.eventType    = :eventType)
-              AND (:aggregateType IS NULL OR e.aggregateType = :aggregateType)
-              AND (:aggregateId  IS NULL OR e.aggregateId  = :aggregateId)
-              AND (:from         IS NULL OR e.createdAt   >= :from)
-              AND (:to           IS NULL OR e.createdAt   <= :to)
-            ORDER BY e.createdAt DESC
-            """)
+    @Query(value = """
+            SELECT * FROM domain_events e
+            WHERE (CAST(:merchantId AS BIGINT)      IS NULL OR e.merchant_id    = CAST(:merchantId AS BIGINT))
+              AND (CAST(:eventType AS VARCHAR)       IS NULL OR e.event_type     = CAST(:eventType AS VARCHAR))
+              AND (CAST(:aggregateType AS VARCHAR)   IS NULL OR e.aggregate_type = CAST(:aggregateType AS VARCHAR))
+              AND (CAST(:aggregateId AS VARCHAR)     IS NULL OR e.aggregate_id   = CAST(:aggregateId AS VARCHAR))
+              AND (CAST(:from AS TIMESTAMP)          IS NULL OR e.created_at    >= CAST(:from AS TIMESTAMP))
+              AND (CAST(:to AS TIMESTAMP)            IS NULL OR e.created_at    <= CAST(:to AS TIMESTAMP))
+            ORDER BY e.created_at DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM domain_events e
+            WHERE (CAST(:merchantId AS BIGINT)      IS NULL OR e.merchant_id    = CAST(:merchantId AS BIGINT))
+              AND (CAST(:eventType AS VARCHAR)       IS NULL OR e.event_type     = CAST(:eventType AS VARCHAR))
+              AND (CAST(:aggregateType AS VARCHAR)   IS NULL OR e.aggregate_type = CAST(:aggregateType AS VARCHAR))
+              AND (CAST(:aggregateId AS VARCHAR)     IS NULL OR e.aggregate_id   = CAST(:aggregateId AS VARCHAR))
+              AND (CAST(:from AS TIMESTAMP)          IS NULL OR e.created_at    >= CAST(:from AS TIMESTAMP))
+              AND (CAST(:to AS TIMESTAMP)            IS NULL OR e.created_at    <= CAST(:to AS TIMESTAMP))
+            """,
+            nativeQuery = true)
     Page<DomainEvent> findWithFilters(
             @Param("merchantId")    Long merchantId,
             @Param("eventType")     String eventType,

@@ -1,6 +1,5 @@
 package com.firstclub.platform.repair;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -14,7 +13,6 @@ import java.util.stream.Collectors;
  * Actions register themselves automatically via {@code @Component}.
  */
 @Component
-@RequiredArgsConstructor
 public class RepairActionRegistry {
 
     private final Map<String, RepairAction> byKey;

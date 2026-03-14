@@ -85,7 +85,7 @@ class IdempotencyFilterPhase3Test {
         SubscriptionV2Controller controller =
                 new SubscriptionV2Controller(billingSubscriptionService, prorationCalculator);
         IdempotencyFilter filter = new IdempotencyFilter(idempotencyService, redisStore, mapper);
-        ReflectionTestUtils.setField(filter, "requestMappingHandlerMapping", handlerMapping);
+        ReflectionTestUtils.setField(filter, "resolvedHandlerMapping", handlerMapping);
 
         Method createSub = SubscriptionV2Controller.class.getDeclaredMethod(
                 "createSubscription", SubscriptionRequestDTO.class);

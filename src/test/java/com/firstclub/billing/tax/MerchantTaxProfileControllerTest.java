@@ -4,6 +4,8 @@ import com.firstclub.billing.tax.dto.*;
 import com.firstclub.billing.tax.entity.*;
 import com.firstclub.billing.tax.repository.TaxProfileRepository;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -17,6 +19,24 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private TaxProfileRepository taxProfileRepository;
+
+    private String adminToken;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+    }
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
+    }
 
     private static final long MERCHANT_ID = 3001L;
 
@@ -40,7 +60,7 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
                 .registeredBusinessName("First Club Pvt Ltd").taxMode(TaxMode.B2B).build();
 
         ResponseEntity<TaxProfileResponseDTO> resp =
-                restTemplate.postForEntity(profileUrl(), req, TaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), TaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -59,13 +79,13 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
         TaxProfileCreateOrUpdateRequestDTO first = TaxProfileCreateOrUpdateRequestDTO.builder()
                 .gstin("27AAAAA0000A1Z5").legalStateCode("MH")
                 .registeredBusinessName("Old Name").taxMode(TaxMode.B2C).build();
-        restTemplate.postForEntity(profileUrl(), first, TaxProfileResponseDTO.class);
+        restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(first, authHeaders()), TaxProfileResponseDTO.class);
 
         TaxProfileCreateOrUpdateRequestDTO second = TaxProfileCreateOrUpdateRequestDTO.builder()
                 .gstin("27AAAAA0000A1Z5").legalStateCode("MH")
                 .registeredBusinessName("New Name").taxMode(TaxMode.B2B).build();
         ResponseEntity<TaxProfileResponseDTO> resp =
-                restTemplate.postForEntity(profileUrl(), second, TaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(second, authHeaders()), TaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getRegisteredBusinessName()).isEqualTo("New Name");
@@ -83,10 +103,10 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
         TaxProfileCreateOrUpdateRequestDTO req = TaxProfileCreateOrUpdateRequestDTO.builder()
                 .gstin("27AAAAA0000A1Z5").legalStateCode("MH")
                 .registeredBusinessName("First Club Pvt Ltd").taxMode(TaxMode.B2B).build();
-        restTemplate.postForEntity(profileUrl(), req, TaxProfileResponseDTO.class);
+        restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), TaxProfileResponseDTO.class);
 
         ResponseEntity<TaxProfileResponseDTO> resp =
-                restTemplate.getForEntity(profileUrl(), TaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()), TaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getMerchantId()).isEqualTo(MERCHANT_ID);
@@ -99,7 +119,7 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
     @DisplayName("GET /tax-profile — merchant has no profile returns 4xx")
     void getMerchantProfile_notExists_returns4xx() {
         ResponseEntity<String> resp =
-                restTemplate.getForEntity(profileUrl(), String.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()).isTrue();
     }
@@ -115,7 +135,7 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
                 .registeredBusinessName("Test Corp").taxMode(TaxMode.B2B).build();
 
         ResponseEntity<String> resp =
-                restTemplate.postForEntity(profileUrl(), req, String.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), String.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -129,15 +149,15 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
         TaxProfileCreateOrUpdateRequestDTO create = TaxProfileCreateOrUpdateRequestDTO.builder()
                 .gstin("27AAAAA0000A1Z5").legalStateCode("MH")
                 .registeredBusinessName("Initial Name").taxMode(TaxMode.B2C).build();
-        restTemplate.postForEntity(profileUrl(), create, TaxProfileResponseDTO.class);
+        restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(create, authHeaders()), TaxProfileResponseDTO.class);
 
         TaxProfileCreateOrUpdateRequestDTO update = TaxProfileCreateOrUpdateRequestDTO.builder()
                 .gstin("27AAAAA0000A1Z5").legalStateCode("MH")
                 .registeredBusinessName("Updated Name").taxMode(TaxMode.B2B).build();
-        restTemplate.put(profileUrl(), update);
+        restTemplate.exchange(profileUrl(), HttpMethod.PUT, new HttpEntity<>(update, authHeaders()), Void.class);
 
         ResponseEntity<TaxProfileResponseDTO> resp =
-                restTemplate.getForEntity(profileUrl(), TaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()), TaxProfileResponseDTO.class);
         assertThat(resp.getBody().getRegisteredBusinessName()).isEqualTo("Updated Name");
     }
 }

@@ -84,7 +84,7 @@ class IdempotencyFilterPhase4Test {
         // Use real IdempotencyConflictDetector (stateless — no mocking needed)
         IdempotencyFilter filter = new IdempotencyFilter(
                 idempotencyService, redisStore, mapper, new IdempotencyConflictDetector());
-        ReflectionTestUtils.setField(filter, "requestMappingHandlerMapping", handlerMapping);
+        ReflectionTestUtils.setField(filter, "resolvedHandlerMapping", handlerMapping);
 
         Method createSub = SubscriptionV2Controller.class.getDeclaredMethod(
                 "createSubscription", SubscriptionRequestDTO.class);

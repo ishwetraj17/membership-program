@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -35,7 +36,7 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
     private final RevenueScheduleAllocator             allocator;
 
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<RevenueRecognitionScheduleResponseDTO> generateScheduleForInvoice(Long invoiceId) {
         // Idempotency — return existing schedules if already generated
         if (scheduleRepository.existsByInvoiceId(invoiceId)) {
@@ -164,6 +165,20 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
                     "cannot generate revenue recognition schedule",
                     "INVALID_SERVICE_PERIOD",
                     HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
+        // Validate period length before any soft-skip checks (merchantId etc.)
+        // so that clearly invalid invoices are always rejected with an error.
+        long numDays = ChronoUnit.DAYS.between(
+                invoice.getPeriodStart().toLocalDate(),
+                invoice.getPeriodEnd().toLocalDate());
+        validatePeriod(invoiceId, numDays,
+                invoice.getPeriodStart().toLocalDate(),
+                invoice.getPeriodEnd().toLocalDate());
+
+        if (invoice.getMerchantId() == null) {
+            log.debug("Invoice {} has no merchantId; skipping revenue recognition schedule", invoiceId);
+            return null;
         }
 
         return invoice;

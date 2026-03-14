@@ -508,6 +508,63 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle JPA entity-not-found errors — maps to 404.
+     */
+    @ExceptionHandler(jakarta.persistence.EntityNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleEntityNotFoundException(
+            jakarta.persistence.EntityNotFoundException e) {
+        log.warn("Entity not found: {}", e.getMessage());
+
+        ErrorResponse error = ErrorResponse.builder()
+            .message(e.getMessage())
+            .errorCode("NOT_FOUND")
+            .timestamp(LocalDateTime.now())
+            .httpStatus(HttpStatus.NOT_FOUND.value())
+            .requestId(MDC.get("requestId"))
+            .build();
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
+    /**
+     * Handle Spring's ResponseStatusException — forwards its status code.
+     */
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(
+            org.springframework.web.server.ResponseStatusException e) {
+        log.warn("ResponseStatusException: {} {}", e.getStatusCode(), e.getReason());
+
+        ErrorResponse error = ErrorResponse.builder()
+            .message(e.getReason() != null ? e.getReason() : e.getMessage())
+            .errorCode("RESPONSE_STATUS_ERROR")
+            .timestamp(LocalDateTime.now())
+            .httpStatus(e.getStatusCode().value())
+            .requestId(MDC.get("requestId"))
+            .build();
+
+        return ResponseEntity.status(e.getStatusCode()).body(error);
+    }
+
+    /**
+     * Handle IllegalArgumentException — maps to 400 Bad Request.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
+            IllegalArgumentException e) {
+        log.warn("Illegal argument: {}", e.getMessage());
+
+        ErrorResponse error = ErrorResponse.builder()
+            .message(e.getMessage())
+            .errorCode("BAD_REQUEST")
+            .timestamp(LocalDateTime.now())
+            .httpStatus(HttpStatus.BAD_REQUEST.value())
+            .requestId(MDC.get("requestId"))
+            .build();
+
+        return ResponseEntity.badRequest().body(error);
+    }
+
+    /**
      * Catch-all for unexpected errors.
      * Stack trace is logged server-side but NOT returned to the caller.
      */

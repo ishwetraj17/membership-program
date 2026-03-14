@@ -62,7 +62,7 @@ public class EventAdminController {
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
 
-            @PageableDefault(size = 50, sort = "createdAt", direction = Sort.Direction.DESC)
+            @PageableDefault(size = 50, sort = "created_at", direction = Sort.Direction.DESC)
             Pageable pageable) {
 
         Page<DomainEvent> page = domainEventRepository.findWithFilters(

@@ -56,7 +56,7 @@ public class PaymentRoutingServiceImpl implements PaymentRoutingService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, noRollbackFor = RoutingException.class)
     public RoutingDecisionDTO selectGatewayForAttempt(PaymentIntentV2 intent,
                                                       PaymentMethod pm,
                                                       int retryNumber) {

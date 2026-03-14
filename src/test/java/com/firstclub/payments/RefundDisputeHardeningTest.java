@@ -162,7 +162,6 @@ class RefundDisputeHardeningTest {
         void fingerprintStoredOnCreation() {
             Payment payment = capturedPayment();
             when(refundMutationGuard.acquireAndCheck(eq(PAYMENT_ID), any(BigDecimal.class))).thenReturn(payment);
-            when(refundV2Repository.findByRequestFingerprint(any())).thenReturn(Optional.empty());
             when(refundV2Repository.save(any())).thenAnswer(inv -> {
                 RefundV2 r = inv.getArgument(0);
                 if (r.getId() == null) r = RefundV2.builder().id(1L).merchantId(r.getMerchantId())
@@ -213,7 +212,6 @@ class RefundDisputeHardeningTest {
         void differentAmountProducesDifferentFingerprint() {
             Payment payment = capturedPayment();
             when(refundMutationGuard.acquireAndCheck(eq(PAYMENT_ID), any(BigDecimal.class))).thenReturn(payment);
-            when(refundV2Repository.findByRequestFingerprint(any())).thenReturn(Optional.empty());
             when(refundV2Repository.save(any())).thenAnswer(inv -> {
                 RefundV2 r = inv.getArgument(0);
                 if (r.getId() == null) r = RefundV2.builder().id(2L).merchantId(r.getMerchantId())
@@ -233,7 +231,6 @@ class RefundDisputeHardeningTest {
             reset(refundV2Repository, paymentRepository, refundMutationGuard);
             Payment payment2 = capturedPayment();
             when(refundMutationGuard.acquireAndCheck(eq(PAYMENT_ID), any(BigDecimal.class))).thenReturn(payment2);
-            when(refundV2Repository.findByRequestFingerprint(any())).thenReturn(Optional.empty());
             when(refundV2Repository.save(any())).thenAnswer(inv -> {
                 RefundV2 r = inv.getArgument(0);
                 if (r.getId() == null) r = RefundV2.builder().id(3L).merchantId(r.getMerchantId())

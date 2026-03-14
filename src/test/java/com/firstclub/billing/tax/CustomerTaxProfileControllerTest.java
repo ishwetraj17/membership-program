@@ -4,6 +4,8 @@ import com.firstclub.billing.tax.dto.*;
 import com.firstclub.billing.tax.entity.*;
 import com.firstclub.billing.tax.repository.CustomerTaxProfileRepository;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -20,6 +22,24 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
 
     private static final long MERCHANT_ID  = 4001L;
     private static final long CUSTOMER_ID  = 5001L;
+
+    private String adminToken;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+    }
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
+    }
 
     private String profileUrl() {
         return "/api/v2/merchants/" + MERCHANT_ID + "/customers/" + CUSTOMER_ID + "/tax-profile";
@@ -43,7 +63,7 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
                         .entityType(CustomerEntityType.BUSINESS).taxExempt(false).build();
 
         ResponseEntity<CustomerTaxProfileResponseDTO> resp =
-                restTemplate.postForEntity(profileUrl(), req, CustomerTaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -64,7 +84,7 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
                         .entityType(CustomerEntityType.INDIVIDUAL).taxExempt(true).build();
 
         ResponseEntity<CustomerTaxProfileResponseDTO> resp =
-                restTemplate.postForEntity(profileUrl(), req, CustomerTaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().isTaxExempt()).isTrue();
@@ -82,10 +102,10 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
                 CustomerTaxProfileCreateOrUpdateRequestDTO.builder()
                         .stateCode("MH").entityType(CustomerEntityType.BUSINESS)
                         .taxExempt(false).build();
-        restTemplate.postForEntity(profileUrl(), req, CustomerTaxProfileResponseDTO.class);
+        restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         ResponseEntity<CustomerTaxProfileResponseDTO> resp =
-                restTemplate.getForEntity(profileUrl(), CustomerTaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getCustomerId()).isEqualTo(CUSTOMER_ID);
@@ -98,7 +118,7 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
     @DisplayName("GET /tax-profile — customer has no profile returns 4xx")
     void getCustomerProfile_notExists_returns4xx() {
         ResponseEntity<String> resp =
-                restTemplate.getForEntity(profileUrl(), String.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()).isTrue();
     }
@@ -114,7 +134,7 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
                         .entityType(CustomerEntityType.INDIVIDUAL).taxExempt(false).build();
 
         ResponseEntity<String> resp =
-                restTemplate.postForEntity(profileUrl(), req, String.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(req, authHeaders()), String.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -129,14 +149,14 @@ class CustomerTaxProfileControllerTest extends PostgresIntegrationTestBase {
                 CustomerTaxProfileCreateOrUpdateRequestDTO.builder()
                         .stateCode("MH").entityType(CustomerEntityType.INDIVIDUAL)
                         .taxExempt(false).build();
-        restTemplate.postForEntity(profileUrl(), first, CustomerTaxProfileResponseDTO.class);
+        restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(first, authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         CustomerTaxProfileCreateOrUpdateRequestDTO second =
                 CustomerTaxProfileCreateOrUpdateRequestDTO.builder()
                         .stateCode("KA").entityType(CustomerEntityType.BUSINESS)
                         .taxExempt(true).build();
         ResponseEntity<CustomerTaxProfileResponseDTO> resp =
-                restTemplate.postForEntity(profileUrl(), second, CustomerTaxProfileResponseDTO.class);
+                restTemplate.exchange(profileUrl(), HttpMethod.POST, new HttpEntity<>(second, authHeaders()), CustomerTaxProfileResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getStateCode()).isEqualTo("KA");

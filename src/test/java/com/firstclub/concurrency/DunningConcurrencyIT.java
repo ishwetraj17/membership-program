@@ -60,6 +60,7 @@ import static org.mockito.ArgumentMatchers.any;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("Dunning Concurrency — SKIP LOCKED duplicate-charge guard")
+@org.springframework.test.annotation.DirtiesContext(classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 class DunningConcurrencyIT extends PostgresIntegrationTestBase {
 
     @MockitoBean

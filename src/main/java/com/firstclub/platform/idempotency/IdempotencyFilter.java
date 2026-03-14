@@ -13,7 +13,6 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.util.StreamUtils;
@@ -83,8 +82,19 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private final IdempotencyConflictDetector conflictDetector;
 
     @Autowired
-    @Lazy
-    private RequestMappingHandlerMapping requestMappingHandlerMapping;
+    private org.springframework.context.ApplicationContext applicationContext;
+
+    /** Lazily resolved to avoid circular dependency during startup. */
+    private volatile RequestMappingHandlerMapping resolvedHandlerMapping;
+
+    private RequestMappingHandlerMapping handlerMapping() {
+        RequestMappingHandlerMapping m = this.resolvedHandlerMapping;
+        if (m == null) {
+            m = applicationContext.getBean("requestMappingHandlerMapping", RequestMappingHandlerMapping.class);
+            this.resolvedHandlerMapping = m;
+        }
+        return m;
+    }
 
     public IdempotencyFilter(IdempotencyService idempotencyService,
                              RedisIdempotencyStore redisStore,
@@ -306,7 +316,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     private Idempotent resolveIdempotentAnnotation(HttpServletRequest request) {
         try {
-            HandlerExecutionChain chain = requestMappingHandlerMapping.getHandler(request);
+            HandlerExecutionChain chain = handlerMapping().getHandler(request);
             if (chain == null) return null;
             Object handler = chain.getHandler();
             if (handler instanceof HandlerMethod handlerMethod) {

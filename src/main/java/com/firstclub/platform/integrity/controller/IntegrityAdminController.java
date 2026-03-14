@@ -39,7 +39,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * </pre>
  */
 @Slf4j
-@RestController
+@RestController("platformIntegrityAdminController")
 @RequestMapping("/api/v2/admin/integrity")
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor

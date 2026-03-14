@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -46,7 +47,12 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
         log.info("Creating schedule for merchantId={}, subscriptionId={}, action={}, effectiveAt={}",
                 merchantId, subscriptionId, request.getScheduledAction(), request.getEffectiveAt());
 
-        SubscriptionV2 subscription = loadSubscriptionOrThrow(merchantId, subscriptionId);
+        // Acquire a pessimistic lock on the subscription to serialise concurrent
+        // schedule creation and prevent duplicate SCHEDULED entries at the same
+        // effectiveAt from passing the check-then-insert window.
+        SubscriptionV2 subscription = subscriptionRepository
+                .findByMerchantIdAndIdForUpdate(merchantId, subscriptionId)
+                .orElseThrow(() -> SubscriptionException.notFound(merchantId, subscriptionId));
 
         // Guard: terminal subscriptions cannot receive new schedules
         if (subscription.getStatus().isTerminal()) {
@@ -58,17 +64,29 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
             throw SubscriptionException.scheduleEffectiveAtInPast();
         }
 
+        // Truncate to microseconds for both storage and comparison since
+        // PostgreSQL stores timestamps with microsecond precision.
+        // Without this, Java's nanosecond-precision values (e.g. 424122881 ns)
+        // get rounded by PostgreSQL to the nearest microsecond (e.g. 424123 µs),
+        // causing the duplicate check to miss a match when comparing the
+        // truncated request value (424122 µs) against the stored rounded
+        // value (424123 µs).
+        LocalDateTime requestEffective = request.getEffectiveAt().truncatedTo(ChronoUnit.MICROS);
+
         // Guard: no duplicate SCHEDULED entry at the same effectiveAt
         List<SubscriptionSchedule> existing = scheduleRepository
                 .findBySubscriptionIdOrderByEffectiveAtAsc(subscriptionId);
         boolean conflict = existing.stream()
                 .filter(s -> s.getStatus() == SubscriptionScheduleStatus.SCHEDULED)
-                .anyMatch(s -> s.getEffectiveAt().equals(request.getEffectiveAt()));
+                .anyMatch(s -> s.getEffectiveAt().truncatedTo(ChronoUnit.MICROS).equals(requestEffective));
         if (conflict) {
             throw SubscriptionException.duplicateScheduleConflict(request.getEffectiveAt());
         }
 
         SubscriptionSchedule schedule = mapper.toEntity(request);
+        // Store the truncated value to ensure DB-stored precision matches
+        // the comparison precision used in the duplicate check above.
+        schedule.setEffectiveAt(requestEffective);
         schedule.setSubscription(subscription);
         schedule.setStatus(SubscriptionScheduleStatus.SCHEDULED);
 

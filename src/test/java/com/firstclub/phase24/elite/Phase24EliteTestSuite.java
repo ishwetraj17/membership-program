@@ -13,8 +13,9 @@ import com.firstclub.payments.refund.service.RefundServiceV2;
 import com.firstclub.payments.refund.dto.RefundCreateRequestDTO;
 import com.firstclub.payments.refund.dto.RefundV2ResponseDTO;
 import com.firstclub.payments.repository.PaymentIntentV2Repository;
-import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
 
@@ -40,7 +41,6 @@ import static org.assertj.core.api.Assertions.*;
  *   <li>Real-world race condition prevention</li>
  * </ul>
  */
-@Slf4j
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("Phase 24 Elite: Simplified Concurrency & Resilience Tests")
 @TestPropertySource(properties = {
@@ -48,6 +48,8 @@ import static org.assertj.core.api.Assertions.*;
     "logging.level.org.springframework.orm.jpa=DEBUG"
 })
 class Phase24EliteTestSuite extends PostgresIntegrationTestBase {
+
+    private static final Logger log = LoggerFactory.getLogger(Phase24EliteTestSuite.class);
 
     @Autowired private PaymentIntentV2Repository paymentIntentRepository;
     @Autowired private RefundV2Repository refundV2Repository;

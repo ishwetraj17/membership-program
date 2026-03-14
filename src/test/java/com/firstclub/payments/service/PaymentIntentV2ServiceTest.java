@@ -226,8 +226,8 @@ class PaymentIntentV2ServiceTest {
                     .thenReturn(GatewayResult.succeeded("TXN-TEST-001", "SUCCESS", 100L));
             PaymentAttempt succeededAttempt = PaymentAttempt.builder()
                     .id(1L).paymentIntent(intent).attemptNumber(1)
-                    .status(PaymentAttemptStatus.SUCCEEDED).build();
-            when(paymentAttemptService.markSucceeded(eq(1L), eq(INTENT_ID), anyString(), anyLong()))
+                    .status(PaymentAttemptStatus.CAPTURED).build();
+            when(paymentAttemptService.markCaptured(eq(1L), eq(INTENT_ID), anyString(), anyLong()))
                     .thenReturn(succeededAttempt);
             when(paymentAttemptRepository.save(any())).thenReturn(succeededAttempt);
         }

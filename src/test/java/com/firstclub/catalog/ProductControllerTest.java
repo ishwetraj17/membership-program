@@ -45,7 +45,7 @@ class ProductControllerTest extends com.firstclub.membership.PostgresIntegration
     void setUp() {
         // Authenticate
         ResponseEntity<JwtResponseDTO> auth = rest.postForEntity(
-                base() + "/api/auth/login",
+                base() + "/api/v1/auth/login",
                 new LoginRequestDTO(ADMIN_EMAIL, ADMIN_PASSWORD),
                 JwtResponseDTO.class);
         adminToken = auth.getBody().getToken();

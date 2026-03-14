@@ -11,6 +11,8 @@ import com.firstclub.ledger.revenue.dto.RevenueRecognitionScheduleResponseDTO;
 import com.firstclub.ledger.revenue.entity.RevenueRecognitionStatus;
 import com.firstclub.ledger.revenue.repository.RevenueRecognitionScheduleRepository;
 import com.firstclub.ledger.revenue.service.RevenueRecognitionScheduleService;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import com.firstclub.membership.PostgresIntegrationTestBase;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,12 +61,28 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         return baseUrl() + BASE_PATH + "/report?from=" + f + "&to=" + t;
     }
 
+    private String adminToken;
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
+    }
+
     // -------------------------------------------------------------------------
     // One-time setup
     // -------------------------------------------------------------------------
 
     @BeforeAll
     void seedLedgerAccounts() {
+        // Authenticate to gain access to secured endpoints
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                baseUrl() + "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+
         // AccountSeeder only runs in @Profile("dev"); seed manually for tests.
         saveAccountIfAbsent("SUBSCRIPTION_LIABILITY", LedgerAccount.AccountType.LIABILITY);
         saveAccountIfAbsent("REVENUE_SUBSCRIPTIONS",  LedgerAccount.AccountType.INCOME);
@@ -113,7 +131,7 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
     @DisplayName("GET /schedules returns 200 (list may be empty at start)")
     void getSchedules_returns200() {
         ResponseEntity<List<RevenueRecognitionScheduleResponseDTO>> resp = restTemplate.exchange(
-                schedulesUrl(), HttpMethod.GET, null,
+                schedulesUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()),
                 new ParameterizedTypeReference<>() {});
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -134,8 +152,8 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         scheduleService.generateScheduleForInvoice(invoice.getId());
 
         // Running for the last day of the period posts all 3 rows
-        ResponseEntity<RevenueRecognitionRunResponseDTO> resp = restTemplate.postForEntity(
-                runUrl(start.plusDays(2)), null, RevenueRecognitionRunResponseDTO.class);
+        ResponseEntity<RevenueRecognitionRunResponseDTO> resp = restTemplate.exchange(
+                runUrl(start.plusDays(2)), HttpMethod.POST, new HttpEntity<>(authHeaders()), RevenueRecognitionRunResponseDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         RevenueRecognitionRunResponseDTO body = resp.getBody();
@@ -159,14 +177,14 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         scheduleService.generateScheduleForInvoice(invoice.getId());
 
         // First run: should post 1 schedule
-        ResponseEntity<RevenueRecognitionRunResponseDTO> first = restTemplate.postForEntity(
-                runUrl(day), null, RevenueRecognitionRunResponseDTO.class);
+        ResponseEntity<RevenueRecognitionRunResponseDTO> first = restTemplate.exchange(
+                runUrl(day), HttpMethod.POST, new HttpEntity<>(authHeaders()), RevenueRecognitionRunResponseDTO.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(first.getBody().getPosted()).isGreaterThanOrEqualTo(1);
 
         // Second run: no PENDING schedules left for this invoice/date
-        ResponseEntity<RevenueRecognitionRunResponseDTO> second = restTemplate.postForEntity(
-                runUrl(day), null, RevenueRecognitionRunResponseDTO.class);
+        ResponseEntity<RevenueRecognitionRunResponseDTO> second = restTemplate.exchange(
+                runUrl(day), HttpMethod.POST, new HttpEntity<>(authHeaders()), RevenueRecognitionRunResponseDTO.class);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         // The specific schedule for this invoice is now POSTED, so won't be re-posted
         // (Other test schedules may also have been processed)
@@ -187,8 +205,8 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         scheduleService.generateScheduleForInvoice(invoice.getId());
 
         // Run only for the first 2 days
-        ResponseEntity<RevenueRecognitionRunResponseDTO> resp = restTemplate.postForEntity(
-                runUrl(start.plusDays(1)), null, RevenueRecognitionRunResponseDTO.class);
+        ResponseEntity<RevenueRecognitionRunResponseDTO> resp = restTemplate.exchange(
+                runUrl(start.plusDays(1)), HttpMethod.POST, new HttpEntity<>(authHeaders()), RevenueRecognitionRunResponseDTO.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         // 3 schedules (for days 3-5) must still be PENDING
@@ -212,12 +230,12 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         scheduleService.generateScheduleForInvoice(invoice.getId());
 
         // Post both schedules
-        restTemplate.postForEntity(runUrl(start.plusDays(1)), null, RevenueRecognitionRunResponseDTO.class);
+        restTemplate.exchange(runUrl(start.plusDays(1)), HttpMethod.POST, new HttpEntity<>(authHeaders()), RevenueRecognitionRunResponseDTO.class);
 
         // Report for May 2024
-        ResponseEntity<RevenueRecognitionReportDTO> resp = restTemplate.getForEntity(
+        ResponseEntity<RevenueRecognitionReportDTO> resp = restTemplate.exchange(
                 reportUrl(LocalDate.of(2024, 5, 1), LocalDate.of(2024, 5, 31)),
-                RevenueRecognitionReportDTO.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), RevenueRecognitionReportDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         RevenueRecognitionReportDTO report = resp.getBody();
@@ -230,9 +248,9 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
     @Order(6)
     @DisplayName("GET /report returns zero counts for future date range with no schedules")
     void report_emptyRangeReturnsZero() {
-        ResponseEntity<RevenueRecognitionReportDTO> resp = restTemplate.getForEntity(
+        ResponseEntity<RevenueRecognitionReportDTO> resp = restTemplate.exchange(
                 reportUrl(LocalDate.of(2099, 1, 1), LocalDate.of(2099, 1, 31)),
-                RevenueRecognitionReportDTO.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), RevenueRecognitionReportDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         RevenueRecognitionReportDTO report = resp.getBody();
@@ -256,7 +274,7 @@ class RevenueRecognitionControllerTest extends PostgresIntegrationTestBase {
         scheduleService.generateScheduleForInvoice(invoice.getId());
 
         ResponseEntity<List<RevenueRecognitionScheduleResponseDTO>> resp = restTemplate.exchange(
-                schedulesUrl(), HttpMethod.GET, null,
+                schedulesUrl(), HttpMethod.GET, new HttpEntity<>(authHeaders()),
                 new ParameterizedTypeReference<>() {});
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);

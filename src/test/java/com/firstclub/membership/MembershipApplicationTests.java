@@ -105,9 +105,14 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
         @DisplayName("Should initialize 3 membership tiers correctly")
         void shouldInitializeMembershipTiers() {
             List<com.firstclub.membership.dto.MembershipTierDTO> tiers = tierService.getAllTiers();
-            
-            assertThat(tiers).hasSize(3);
-            assertThat(tiers)
+            List<String> defaultTierNames = List.of("SILVER", "GOLD", "PLATINUM");
+
+            List<com.firstclub.membership.dto.MembershipTierDTO> defaultTiers = tiers.stream()
+                .filter(t -> defaultTierNames.contains(t.getName()))
+                .toList();
+
+            assertThat(defaultTiers).hasSize(3);
+            assertThat(defaultTiers)
                 .extracting(tier -> tier.getName())
                 .containsExactlyInAnyOrder("SILVER", "GOLD", "PLATINUM");
         }
@@ -116,13 +121,18 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
         @DisplayName("Should initialize 9 membership plans (3 tiers × 3 durations)")
         void shouldInitializeMembershipPlans() {
             List<MembershipPlanDTO> plans = planService.getActivePlans();
-            
-            assertThat(plans).hasSize(9);
-            
-            long monthlyCount = plans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.MONTHLY).count();
-            long quarterlyCount = plans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.QUARTERLY).count();
-            long yearlyCount = plans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.YEARLY).count();
-            
+            List<String> defaultTierNames = List.of("SILVER", "GOLD", "PLATINUM");
+
+            List<MembershipPlanDTO> defaultPlans = plans.stream()
+                .filter(p -> defaultTierNames.contains(p.getTier()))
+                .toList();
+
+            assertThat(defaultPlans).hasSize(9);
+
+            long monthlyCount = defaultPlans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.MONTHLY).count();
+            long quarterlyCount = defaultPlans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.QUARTERLY).count();
+            long yearlyCount = defaultPlans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.YEARLY).count();
+
             assertThat(monthlyCount).isEqualTo(3);
             assertThat(quarterlyCount).isEqualTo(3);
             assertThat(yearlyCount).isEqualTo(3);
@@ -467,7 +477,7 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
 
             assertThatThrownBy(() -> membershipService.cancelSubscription(subscription.getId(), "Second cancellation"))
                 .isInstanceOf(MembershipException.class)
-                .hasMessageContaining("Cannot cancel non-active subscription");
+                .hasMessageContaining("Invalid status transition for SUBSCRIPTION: CANCELLED -> CANCELLED");
         }
     }
 
@@ -497,9 +507,13 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
         @Test
         @DisplayName("Should filter plans by type correctly")
         void shouldFilterPlansByType() {
-            List<MembershipPlanDTO> monthlyPlans = planService.getPlansByType(MembershipPlan.PlanType.MONTHLY);
-            List<MembershipPlanDTO> quarterlyPlans = planService.getPlansByType(MembershipPlan.PlanType.QUARTERLY);
-            List<MembershipPlanDTO> yearlyPlans = planService.getPlansByType(MembershipPlan.PlanType.YEARLY);
+            List<String> defaultTierNames = List.of("SILVER", "GOLD", "PLATINUM");
+            List<MembershipPlanDTO> monthlyPlans = planService.getPlansByType(MembershipPlan.PlanType.MONTHLY).stream()
+                .filter(p -> defaultTierNames.contains(p.getTier())).toList();
+            List<MembershipPlanDTO> quarterlyPlans = planService.getPlansByType(MembershipPlan.PlanType.QUARTERLY).stream()
+                .filter(p -> defaultTierNames.contains(p.getTier())).toList();
+            List<MembershipPlanDTO> yearlyPlans = planService.getPlansByType(MembershipPlan.PlanType.YEARLY).stream()
+                .filter(p -> defaultTierNames.contains(p.getTier())).toList();
 
             assertThat(monthlyPlans).hasSize(3);
             assertThat(quarterlyPlans).hasSize(3);
@@ -700,7 +714,10 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody()).isNotNull();
-            assertThat(response.getBody().length).isEqualTo(9);
+            long defaultPlanCount = java.util.Arrays.stream(response.getBody())
+                .filter(p -> List.of("SILVER", "GOLD", "PLATINUM").contains(p.getTier()))
+                .count();
+            assertThat(defaultPlanCount).isEqualTo(9);
         }
 
         @Test

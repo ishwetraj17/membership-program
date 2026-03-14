@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -76,7 +77,7 @@ public class CustomerController {
             @PathVariable Long merchantId,
             @Parameter(description = "Filter by status (ACTIVE, INACTIVE, BLOCKED)")
             @RequestParam(required = false) CustomerStatus status,
-            @Positive @RequestParam(defaultValue = "0") int page,
+            @PositiveOrZero @RequestParam(defaultValue = "0") int page,
             @Positive(message = "size must be >= 1") @Max(100) @RequestParam(defaultValue = "20") int size) {
 
         Page<CustomerResponseDTO> result = customerService.getCustomersByMerchant(

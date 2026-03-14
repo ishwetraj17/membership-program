@@ -22,24 +22,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  */
 @Configuration
 @Profile("dev")
-@EnableJpaRepositories(basePackages = {
-        "com.firstclub.membership.repository",
-        "com.firstclub.merchant.repository",
-        "com.firstclub.customer.repository",
-        "com.firstclub.catalog.repository",
-        "com.firstclub.subscription.repository",
-        "com.firstclub.platform.idempotency",
-        "com.firstclub.payments.repository",
-        "com.firstclub.billing.repository",
-        "com.firstclub.ledger.repository",
-        "com.firstclub.dunning.repository",
-        "com.firstclub.outbox.repository",
-        "com.firstclub.risk.repository",
-        "com.firstclub.recon.repository",
-        "com.firstclub.events.repository",
-        "com.firstclub.payments.routing.repository",
-        "com.firstclub.platform.scheduler.repository"
-})
+@EnableJpaRepositories(basePackages = "com.firstclub")
 @EnableJpaAuditing
 public class DatabaseConfig {
 }

@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.*;
  * <p>All endpoints are tenant-scoped via {@code merchantId} path variable.
  * Requires {@code ADMIN} role.
  */
-@RestController
+@RestController("merchantSubscriptionV2Controller")
 @RequestMapping("/api/v2/merchants/{merchantId}/subscriptions")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")

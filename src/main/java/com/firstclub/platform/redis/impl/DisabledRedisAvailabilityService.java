@@ -2,16 +2,17 @@ package com.firstclub.platform.redis.impl;
 
 import com.firstclub.platform.redis.RedisAvailabilityService;
 import com.firstclub.platform.redis.RedisStatus;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
  * No-op implementation of {@link RedisAvailabilityService} used when Redis is
  * disabled ({@code app.redis.enabled=false} or property absent).
  *
- * <p>This bean is registered via {@link ConditionalOnMissingBean}: if
- * {@link RedisAvailabilityServiceImpl} is present (because Redis is enabled),
- * this class is not instantiated.
+ * <p>This bean is registered when the {@code app.redis.enabled} property is
+ * {@code false} or missing — the mirror-image of
+ * {@link RedisAvailabilityServiceImpl}, which is registered when the property
+ * is {@code true}.
  *
  * <h3>Behaviour</h3>
  * <ul>
@@ -26,7 +27,7 @@ import org.springframework.stereotype.Service;
  * was intentionally not configured and all operations should use the database.
  */
 @Service
-@ConditionalOnMissingBean(RedisAvailabilityService.class)
+@ConditionalOnProperty(name = "app.redis.enabled", havingValue = "false", matchIfMissing = true)
 public class DisabledRedisAvailabilityService implements RedisAvailabilityService {
 
     @Override

@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
  * <p>Over-recognition indicates that deferred revenue was released beyond
  * the total amount billed — a revenue account integrity violation.
  */
-@Component
+@Component("platformRevenueRecognitionCeilingChecker")
 @RequiredArgsConstructor
 public class RevenueRecognitionCeilingChecker implements IntegrityChecker {
 

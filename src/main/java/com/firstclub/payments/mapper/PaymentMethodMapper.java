@@ -15,6 +15,7 @@ public interface PaymentMethodMapper {
 
     @Mapping(target = "merchantId", source = "merchant.id")
     @Mapping(target = "customerId",  source = "customer.id")
+    @Mapping(target = "isDefault",   source = "default")
     PaymentMethodResponseDTO toResponseDTO(PaymentMethod entity);
 
     @Mapping(target = "id",        ignore = true)
