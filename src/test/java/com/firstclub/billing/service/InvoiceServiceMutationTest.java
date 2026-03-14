@@ -217,6 +217,29 @@ class InvoiceServiceMutationTest {
 
             verify(outboxService).publish(eq(DomainEventTypes.INVOICE_CREATED), anyMap());
         }
+
+        /**
+         * Kills mutants: lines 126, 134 — RemoveConditionalMutator_EQUAL_ELSE —
+         * non-null subscriptionId must appear in event data (not 0L).
+         */
+        @Test
+        @DisplayName("event data uses actual subscriptionId when non-null")
+        void create_nonNullSubscriptionId_eventDataUsesActualId() {
+            MembershipPlan p = plan(1L, "999.00");
+            when(planRepository.findById(1L)).thenReturn(Optional.of(p));
+            stubInvoiceSaveAndLines(null);
+
+            invoiceService.createInvoiceForSubscription(10L, 20L, 1L,
+                    LocalDateTime.now(), LocalDateTime.now().plusDays(30));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+            verify(domainEventLog).record(eq("INVOICE_CREATED"), captor.capture());
+            assertThat(captor.getValue().get("subscriptionId")).isEqualTo(20L);
+
+            verify(outboxService).publish(eq(DomainEventTypes.INVOICE_CREATED), captor.capture());
+            assertThat(captor.getValue().get("subscriptionId")).isEqualTo(20L);
+        }
     }
 
     // =========================================================================
@@ -307,6 +330,34 @@ class InvoiceServiceMutationTest {
             ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
             verify(domainEventLog).record(eq("PAYMENT_SUCCEEDED"), captor.capture());
             assertThat(captor.getValue().get("subscriptionId")).isEqualTo(0L);
+        }
+
+        /**
+         * Kills mutants: lines 192, 199 — RemoveConditionalMutator_EQUAL_ELSE —
+         * non-null subscriptionId must appear in event data (not 0L).
+         */
+        @Test
+        @DisplayName("event data uses actual subscriptionId when non-null")
+        void payment_nonNullSubscriptionId_eventDataUsesActualId() {
+            Invoice invoice = openInvoice(1L);  // has subscriptionId=20L
+            when(invoiceRepository.findById(1L)).thenReturn(Optional.of(invoice));
+            when(invoiceRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(invoiceLineRepository.findByInvoiceId(anyLong())).thenReturn(List.of());
+
+            Subscription sub = subscription(20L, Subscription.SubscriptionStatus.PENDING);
+            when(subscriptionRepository.findById(20L)).thenReturn(Optional.of(sub));
+            when(subscriptionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(historyRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            invoiceService.onPaymentSucceeded(1L);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+            verify(domainEventLog).record(eq("PAYMENT_SUCCEEDED"), captor.capture());
+            assertThat(captor.getValue().get("subscriptionId")).isEqualTo(20L);
+
+            verify(outboxService).publish(eq(DomainEventTypes.PAYMENT_SUCCEEDED), captor.capture());
+            assertThat(captor.getValue().get("subscriptionId")).isEqualTo(20L);
         }
 
         /**
@@ -564,6 +615,113 @@ class InvoiceServiceMutationTest {
             assertThat(lineDto.getLineType()).isEqualTo(InvoiceLineType.PLAN_CHARGE);
             assertThat(lineDto.getDescription()).isEqualTo("Subscription: Premium");
             assertThat(lineDto.getAmount()).isEqualByComparingTo("999.00");
+        }
+    }
+
+    // =========================================================================
+    // activateSubscription — non-null user branch
+    // =========================================================================
+
+    @Nested
+    @DisplayName("activateSubscription — non-null user event data")
+    class ActivateSubscriptionUserTests {
+
+        /**
+         * Kills mutants: lines 312, 317 — RemoveConditionalMutator_EQUAL_ELSE —
+         * non-null user → event data must contain the user's actual ID.
+         */
+        @Test
+        @DisplayName("activation event data uses actual userId when user is non-null")
+        void activation_nonNullUser_usesActualId() {
+            Invoice invoice = openInvoice(1L);
+            when(invoiceRepository.findById(1L)).thenReturn(Optional.of(invoice));
+            when(invoiceRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(invoiceLineRepository.findByInvoiceId(anyLong())).thenReturn(List.of());
+
+            Subscription sub = subscription(20L, Subscription.SubscriptionStatus.PENDING);
+            // sub already has user with id=10L from helper
+            when(subscriptionRepository.findById(20L)).thenReturn(Optional.of(sub));
+            when(subscriptionRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(historyRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            invoiceService.onPaymentSucceeded(1L);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+            verify(domainEventLog).record(eq("SUBSCRIPTION_ACTIVATED"), captor.capture());
+            assertThat(captor.getValue().get("userId")).isEqualTo(10L);
+
+            verify(outboxService).publish(eq(DomainEventTypes.SUBSCRIPTION_ACTIVATED), captor.capture());
+            assertThat(captor.getValue().get("userId")).isEqualTo(10L);
+        }
+    }
+
+    // =========================================================================
+    // fetchOpenInvoice — status guard
+    // =========================================================================
+
+    @Nested
+    @DisplayName("fetchOpenInvoice (via applyAvailableCredits)")
+    class FetchOpenInvoiceTests {
+
+        /**
+         * Kills mutant: line 326 — RemoveConditionalMutator_EQUAL_ELSE —
+         * replaces `invoice.getStatus() != InvoiceStatus.OPEN` with false.
+         * A non-OPEN invoice must be rejected.
+         */
+        @Test
+        @DisplayName("applyAvailableCredits rejects PAID invoice with INVOICE_NOT_OPEN")
+        void paidInvoice_throws() {
+            Invoice paidInv = openInvoice(1L);
+            paidInv.setStatus(InvoiceStatus.PAID);
+
+            when(invoiceRepository.findById(1L)).thenReturn(Optional.of(paidInv));
+
+            assertThatThrownBy(() -> invoiceService.applyAvailableCredits(10L, 1L))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("not OPEN");
+        }
+
+        @Test
+        @DisplayName("applyAvailableCredits rejects VOID invoice")
+        void voidInvoice_throws() {
+            Invoice voidInv = openInvoice(1L);
+            voidInv.setStatus(InvoiceStatus.VOID);
+
+            when(invoiceRepository.findById(1L)).thenReturn(Optional.of(voidInv));
+
+            assertThatThrownBy(() -> invoiceService.applyAvailableCredits(10L, 1L))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("not OPEN");
+        }
+    }
+
+    // =========================================================================
+    // applyAvailableCredits — return value null mutant
+    // =========================================================================
+
+    @Nested
+    @DisplayName("applyAvailableCredits — return value")
+    class ApplyCreditsReturnTests {
+
+        /**
+         * Kills mutant: line 160 — NullReturnValsMutator — replaced return
+         * value with null in public applyAvailableCredits.
+         */
+        @Test
+        @DisplayName("applyAvailableCredits returns non-null DTO")
+        void apply_returnsNonNullDto() {
+            Invoice invoice = openInvoice(1L);
+            when(invoiceRepository.findById(1L)).thenReturn(Optional.of(invoice));
+            when(creditNoteRepository.findAvailableByUserId(10L)).thenReturn(List.of());
+            when(invoiceTotalService.recomputeTotals(any())).thenAnswer(i -> i.getArgument(0));
+            when(invoiceLineRepository.findByInvoiceId(anyLong())).thenReturn(List.of());
+
+            InvoiceDTO result = invoiceService.applyAvailableCredits(10L, 1L);
+
+            assertThat(result).isNotNull();
+            assertThat(result.getId()).isEqualTo(1L);
+            assertThat(result.getStatus()).isEqualTo(InvoiceStatus.OPEN);
         }
     }
 }
