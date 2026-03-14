@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -62,7 +63,7 @@ public class ProductController {
     public ResponseEntity<Page<ProductResponseDTO>> listProducts(
             @PathVariable Long merchantId,
             @RequestParam(required = false) ProductStatus status,
-            @RequestParam(defaultValue = "0") @Positive(message = "page must be positive") int page,
+            @RequestParam(defaultValue = "0") @PositiveOrZero(message = "page must be >= 0") int page,
             @RequestParam(defaultValue = "20") @Max(100) int size) {
         return ResponseEntity.ok(
                 productService.listProducts(merchantId, status,
