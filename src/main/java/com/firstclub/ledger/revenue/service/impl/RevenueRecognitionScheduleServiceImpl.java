@@ -159,17 +159,17 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
             return null;
         }
 
-        if (invoice.getMerchantId() == null) {
-            log.debug("Invoice {} has no merchantId; skipping revenue recognition schedule", invoiceId);
-            return null;
-        }
-
         if (invoice.getPeriodStart() == null || invoice.getPeriodEnd() == null) {
             throw new MembershipException(
                     "Invoice " + invoiceId + " has no service period (periodStart/periodEnd); " +
                     "cannot generate revenue recognition schedule",
                     "INVALID_SERVICE_PERIOD",
                     HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
+        if (invoice.getMerchantId() == null) {
+            log.debug("Invoice {} has no merchantId; skipping revenue recognition schedule", invoiceId);
+            return null;
         }
 
         return invoice;
