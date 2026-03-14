@@ -277,9 +277,14 @@ public class InvoiceService {
     }
 
     private void activateSubscription(Long subscriptionId) {
-        Subscription sub = subscriptionRepository.findById(subscriptionId)
-                .orElseThrow(() -> new MembershipException(
-                        "Subscription not found: " + subscriptionId, "SUBSCRIPTION_NOT_FOUND"));
+        java.util.Optional<Subscription> optSub = subscriptionRepository.findById(subscriptionId);
+        if (optSub.isEmpty()) {
+            // V2 subscriptions live in a different table and handle their own
+            // activation in the caller (e.g. dunning handleSuccess).
+            log.debug("V1 subscription {} not found — likely a V2 subscription; skipping activation.", subscriptionId);
+            return;
+        }
+        Subscription sub = optSub.get();
 
         if (sub.getStatus() == Subscription.SubscriptionStatus.ACTIVE) {
             log.debug("Subscription {} already ACTIVE, skipping.", subscriptionId);
