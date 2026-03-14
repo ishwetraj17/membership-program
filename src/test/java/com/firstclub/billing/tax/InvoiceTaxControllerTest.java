@@ -28,20 +28,24 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
     @Autowired private TestRestTemplate restTemplate;
 
+    private String adminToken;
+
     @BeforeAll
     void authenticate() {
         LoginRequestDTO login = LoginRequestDTO.builder()
                 .email("admin@firstclub.com").password("Admin@firstclub1").build();
         ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
                 "/api/v1/auth/login", login, JwtResponseDTO.class);
-        restTemplate.getRestTemplate().getInterceptors().add(
-                (request, body, execution) -> {
-                    request.getHeaders().setBearerAuth(auth.getBody().getToken());
-                    return execution.execute(request, body);
-                });
+        adminToken = auth.getBody().getToken();
     }
 
-    @Autowired private TestRestTemplate restTemplate;
+    private HttpHeaders authHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(adminToken);
+        return h;
+    }
+
     @Autowired private InvoiceRepository invoiceRepository;
     @Autowired private InvoiceLineRepository invoiceLineRepository;
     @Autowired private TaxProfileRepository taxProfileRepository;
@@ -103,9 +107,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
         Invoice inv = createInvoice("1000.00");
         addLine(inv.getId(), InvoiceLineType.PLAN_CHARGE, "1000.00");
 
-        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.getForEntity(
+        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.exchange(
                 taxUrl(inv.getId(), "/tax-breakdown?customerId=" + CUSTOMER_ID),
-                InvoiceTaxBreakdownDTO.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), InvoiceTaxBreakdownDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getCgst()).isEqualByComparingTo(new BigDecimal("90.00"));
@@ -126,9 +130,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
         Invoice inv = createInvoice("1000.00");
         addLine(inv.getId(), InvoiceLineType.PLAN_CHARGE, "1000.00");
 
-        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.getForEntity(
+        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.exchange(
                 taxUrl(inv.getId(), "/tax-breakdown?customerId=" + CUSTOMER_ID),
-                InvoiceTaxBreakdownDTO.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), InvoiceTaxBreakdownDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getIgst()).isEqualByComparingTo(new BigDecimal("180.00"));
@@ -147,9 +151,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
         Invoice inv = createInvoice("1000.00");
         addLine(inv.getId(), InvoiceLineType.PLAN_CHARGE, "1000.00");
 
-        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.getForEntity(
+        ResponseEntity<InvoiceTaxBreakdownDTO> resp = restTemplate.exchange(
                 taxUrl(inv.getId(), "/tax-breakdown?customerId=" + CUSTOMER_ID),
-                InvoiceTaxBreakdownDTO.class);
+                HttpMethod.GET, new HttpEntity<>(authHeaders()), InvoiceTaxBreakdownDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getTaxTotal()).isEqualByComparingTo(BigDecimal.ZERO);
@@ -170,8 +174,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.postForEntity(
-                taxUrl(inv.getId(), "/recalculate-tax"), req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getTaxTotal()).isEqualByComparingTo(new BigDecimal("180.00"));
@@ -197,8 +202,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.postForEntity(
-                taxUrl(inv.getId(), "/recalculate-tax"), req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         // IGST = 18% of 500 = 90
@@ -222,8 +228,10 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        restTemplate.postForEntity(taxUrl(inv.getId(), "/recalculate-tax"), req, InvoiceSummaryDTO.class);
-        restTemplate.postForEntity(taxUrl(inv.getId(), "/recalculate-tax"), req, InvoiceSummaryDTO.class);
+        restTemplate.exchange(taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
+        restTemplate.exchange(taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         long gstLines = invoiceLineRepository.findByInvoiceId(inv.getId()).stream()
                 .filter(l -> l.getLineType() == InvoiceLineType.CGST
@@ -248,8 +256,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        ResponseEntity<String> resp = restTemplate.postForEntity(
-                taxUrl(inv.getId(), "/recalculate-tax"), req, String.class);
+        ResponseEntity<String> resp = restTemplate.exchange(
+                taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()).isTrue();
     }
@@ -267,8 +276,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        ResponseEntity<String> resp = restTemplate.postForEntity(
-                taxUrl(inv.getId(), "/recalculate-tax"), req, String.class);
+        ResponseEntity<String> resp = restTemplate.exchange(
+                taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), String.class);
 
         assertThat(resp.getStatusCode().is4xxClientError()).isTrue();
     }
@@ -287,8 +297,9 @@ class InvoiceTaxControllerTest extends PostgresIntegrationTestBase {
 
         RecalculateTaxRequestDTO req = RecalculateTaxRequestDTO.builder()
                 .customerId(CUSTOMER_ID).build();
-        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.postForEntity(
-                taxUrl(inv.getId(), "/recalculate-tax"), req, InvoiceSummaryDTO.class);
+        ResponseEntity<InvoiceSummaryDTO> resp = restTemplate.exchange(
+                taxUrl(inv.getId(), "/recalculate-tax"),
+                HttpMethod.POST, new HttpEntity<>(req, authHeaders()), InvoiceSummaryDTO.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         // taxable base = 1000 - 100 = 900; CGST+SGST = 162
