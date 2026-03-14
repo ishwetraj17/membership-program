@@ -13,7 +13,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
@@ -36,18 +35,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>{@code GET /api/v2/admin/system/redis/health} returns 200 with status "UP".</li>
  * </ul>
  *
- * <p>These tests are skipped automatically when Docker is not available
- * (see {@code @Testcontainers(disabledWithoutDocker = true)} on the base class).
+ * <p>The Redis container is started eagerly via a static initialiser so that it
+ * is guaranteed to be running before Spring creates the application context.
  */
 @DisplayName("Redis Infrastructure — Integration Tests")
 class RedisIntegrationTest extends PostgresIntegrationTestBase {
 
     @SuppressWarnings("resource")
-    @Container
     static final GenericContainer<?> REDIS =
             new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
                     .withExposedPorts(6379)
                     .withStartupTimeout(Duration.ofSeconds(60));
+
+    static {
+        REDIS.start();
+    }
 
     @DynamicPropertySource
     static void redisProperties(DynamicPropertyRegistry registry) {

@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
@@ -24,17 +23,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code set}, {@code delete}, {@code increment}, {@code expire}) work correctly
  * end-to-end with Lettuce and a live Redis 7 instance.
  *
- * <p>Tests are skipped automatically when Docker is unavailable.
+ * <p>The Redis container is started eagerly via a static initialiser so that it
+ * is guaranteed to be running before Spring creates the application context.
  */
 @DisplayName("RedisOpsFacade — Integration Tests")
 class RedisOpsFacadeIntegrationTest extends PostgresIntegrationTestBase {
 
     @SuppressWarnings("resource")
-    @Container
     static final GenericContainer<?> REDIS =
             new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
                     .withExposedPorts(6379)
                     .withStartupTimeout(Duration.ofSeconds(60));
+
+    static {
+        REDIS.start();
+    }
 
     @DynamicPropertySource
     static void redisProperties(DynamicPropertyRegistry registry) {
