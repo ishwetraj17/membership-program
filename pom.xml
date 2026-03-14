@@ -298,11 +298,24 @@
                         <param>com.firstclub.ledger.*</param>
                         <param>com.firstclub.billing.*</param>
                         <param>com.firstclub.payments.*</param>
+                        <param>com.firstclub.dunning.*</param>
+                        <param>com.firstclub.integrity.*</param>
+                        <param>com.firstclub.outbox.*</param>
+                        <param>com.firstclub.membership.idempotency.*</param>
                         <param>com.firstclub.concurrency.elite.*</param>
                         <param>com.firstclub.property.elite.*</param>
                         <param>com.firstclub.chaos.elite.*</param>
-                        <param>*IT</param>
                     </targetTests>
+                    
+                    <!--
+                        Exclude integration / concurrency tests from PIT:
+                        these extend PostgresIntegrationTestBase and require
+                        Testcontainers (Docker), which is unavailable inside
+                        PIT's forked JVMs. Surefire still runs them normally.
+                    -->
+                    <excludedTestClasses>
+                        <param>*IT</param>
+                    </excludedTestClasses>
                     
                     <!-- Exclude classes that don't need mutation testing -->
                     <excludedClasses>
