@@ -256,7 +256,7 @@ public class PaymentIntentV2ServiceImpl implements PaymentIntentV2Service {
 
         // ── Update attempt and intent based on gateway result ─────────────────
         if (gatewayResult.isSucceeded()) {
-            paymentAttemptService.markSucceeded(
+            paymentAttemptService.markCaptured(
                     attempt.getId(), id, "SUCCESS", latencyMs);
 
             intent.setLastSuccessfulAttemptId(attempt.getId());

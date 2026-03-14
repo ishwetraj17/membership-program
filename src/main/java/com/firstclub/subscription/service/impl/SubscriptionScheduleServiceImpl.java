@@ -47,7 +47,12 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
         log.info("Creating schedule for merchantId={}, subscriptionId={}, action={}, effectiveAt={}",
                 merchantId, subscriptionId, request.getScheduledAction(), request.getEffectiveAt());
 
-        SubscriptionV2 subscription = loadSubscriptionOrThrow(merchantId, subscriptionId);
+        // Acquire a pessimistic lock on the subscription to serialise concurrent
+        // schedule creation and prevent duplicate SCHEDULED entries at the same
+        // effectiveAt from passing the check-then-insert window.
+        SubscriptionV2 subscription = subscriptionRepository
+                .findByMerchantIdAndIdForUpdate(merchantId, subscriptionId)
+                .orElseThrow(() -> SubscriptionException.notFound(merchantId, subscriptionId));
 
         // Guard: terminal subscriptions cannot receive new schedules
         if (subscription.getStatus().isTerminal()) {

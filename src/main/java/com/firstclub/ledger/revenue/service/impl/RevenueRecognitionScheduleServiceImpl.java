@@ -167,6 +167,15 @@ public class RevenueRecognitionScheduleServiceImpl implements RevenueRecognition
                     HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
+        // Validate period length before any soft-skip checks (merchantId etc.)
+        // so that clearly invalid invoices are always rejected with an error.
+        long numDays = ChronoUnit.DAYS.between(
+                invoice.getPeriodStart().toLocalDate(),
+                invoice.getPeriodEnd().toLocalDate());
+        validatePeriod(invoiceId, numDays,
+                invoice.getPeriodStart().toLocalDate(),
+                invoice.getPeriodEnd().toLocalDate());
+
         if (invoice.getMerchantId() == null) {
             log.debug("Invoice {} has no merchantId; skipping revenue recognition schedule", invoiceId);
             return null;

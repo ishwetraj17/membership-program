@@ -2,9 +2,11 @@ package com.firstclub.subscription.repository;
 
 import com.firstclub.subscription.entity.SubscriptionStatusV2;
 import com.firstclub.subscription.entity.SubscriptionV2;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -24,6 +26,16 @@ public interface SubscriptionV2Repository extends JpaRepository<SubscriptionV2, 
 
     /** Tenant-scoped lookup by primary key. */
     Optional<SubscriptionV2> findByMerchantIdAndId(Long merchantId, Long subscriptionId);
+
+    /**
+     * Tenant-scoped lookup with a pessimistic write lock
+     * ({@code SELECT ... FOR UPDATE}).  Used by schedule creation to serialise
+     * concurrent duplicate-check-then-insert flows.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM SubscriptionV2 s WHERE s.merchant.id = :merchantId AND s.id = :id")
+    Optional<SubscriptionV2> findByMerchantIdAndIdForUpdate(@Param("merchantId") Long merchantId,
+                                                             @Param("id") Long id);
 
     /** All subscriptions for a specific customer within a merchant. */
     List<SubscriptionV2> findByMerchantIdAndCustomerId(Long merchantId, Long customerId);
