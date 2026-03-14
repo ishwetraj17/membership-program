@@ -467,7 +467,7 @@ class MembershipApplicationTests extends PostgresIntegrationTestBase {
 
             assertThatThrownBy(() -> membershipService.cancelSubscription(subscription.getId(), "Second cancellation"))
                 .isInstanceOf(MembershipException.class)
-                .hasMessageContaining("Cannot cancel non-active subscription");
+                .hasMessageContaining("Invalid status transition for SUBSCRIPTION: CANCELLED -> CANCELLED");
         }
     }
 

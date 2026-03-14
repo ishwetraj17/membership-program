@@ -4,6 +4,8 @@ import com.firstclub.billing.tax.dto.*;
 import com.firstclub.billing.tax.entity.*;
 import com.firstclub.billing.tax.repository.TaxProfileRepository;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -17,6 +19,19 @@ class MerchantTaxProfileControllerTest extends PostgresIntegrationTestBase {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private TaxProfileRepository taxProfileRepository;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        restTemplate.getRestTemplate().getInterceptors().add(
+                (request, body, execution) -> {
+                    request.getHeaders().setBearerAuth(auth.getBody().getToken());
+                    return execution.execute(request, body);
+                });
+    }
 
     private static final long MERCHANT_ID = 3001L;
 

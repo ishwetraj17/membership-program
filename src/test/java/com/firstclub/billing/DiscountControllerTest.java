@@ -5,6 +5,8 @@ import com.firstclub.billing.dto.DiscountResponseDTO;
 import com.firstclub.billing.entity.DiscountStatus;
 import com.firstclub.billing.entity.DiscountType;
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -33,6 +35,19 @@ class DiscountControllerTest extends PostgresIntegrationTestBase {
 
     private static final long MERCHANT_ID = 1001L;
     private Long createdDiscountId;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = restTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        restTemplate.getRestTemplate().getInterceptors().add(
+                (request, body, execution) -> {
+                    request.getHeaders().setBearerAuth(auth.getBody().getToken());
+                    return execution.execute(request, body);
+                });
+    }
 
     private String baseUrl() {
         return "/api/v2/merchants/" + MERCHANT_ID + "/discounts";
