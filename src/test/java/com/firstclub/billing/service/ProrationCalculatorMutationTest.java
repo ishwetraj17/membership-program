@@ -29,7 +29,7 @@ class ProrationCalculatorMutationTest {
      */
     @Test
     @DisplayName("zero totalDays produces only PLAN_CHARGE, no proration")
-    void compute_zeroTotalDays_noPrurationLine() {
+    void compute_zeroTotalDays_noProrationLine() {
         ProrationCalculator calc = new ProrationCalculator(null, null);
 
         List<InvoiceLineDTO> lines = calc.compute(
