@@ -82,7 +82,7 @@ class SubscriptionScheduleServiceTest {
                     .scheduledAction(SubscriptionScheduledAction.CANCEL)
                     .effectiveAt(LocalDateTime.now().plusDays(30)).build();
 
-            when(subscriptionRepository.findByMerchantIdAndId(1L, 50L))
+            when(subscriptionRepository.findByMerchantIdAndIdForUpdate(1L, 50L))
                     .thenReturn(Optional.of(activeSub));
             when(scheduleRepository.findBySubscriptionIdOrderByEffectiveAtAsc(50L))
                     .thenReturn(List.of());
@@ -102,7 +102,7 @@ class SubscriptionScheduleServiceTest {
                     .scheduledAction(SubscriptionScheduledAction.CANCEL)
                     .effectiveAt(LocalDateTime.now().plusDays(10)).build();
 
-            when(subscriptionRepository.findByMerchantIdAndId(1L, 60L))
+            when(subscriptionRepository.findByMerchantIdAndIdForUpdate(1L, 60L))
                     .thenReturn(Optional.of(cancelledSub));
 
             assertThatThrownBy(() -> service.createSchedule(1L, 60L, req))
@@ -117,7 +117,7 @@ class SubscriptionScheduleServiceTest {
                     .scheduledAction(SubscriptionScheduledAction.PAUSE)
                     .effectiveAt(LocalDateTime.now().minusDays(1)).build();
 
-            when(subscriptionRepository.findByMerchantIdAndId(1L, 50L))
+            when(subscriptionRepository.findByMerchantIdAndIdForUpdate(1L, 50L))
                     .thenReturn(Optional.of(activeSub));
 
             assertThatThrownBy(() -> service.createSchedule(1L, 50L, req))
@@ -137,7 +137,7 @@ class SubscriptionScheduleServiceTest {
                     .subscription(activeSub).scheduledAction(SubscriptionScheduledAction.PAUSE)
                     .effectiveAt(sameTime).status(SubscriptionScheduleStatus.SCHEDULED).build();
 
-            when(subscriptionRepository.findByMerchantIdAndId(1L, 50L))
+            when(subscriptionRepository.findByMerchantIdAndIdForUpdate(1L, 50L))
                     .thenReturn(Optional.of(activeSub));
             when(scheduleRepository.findBySubscriptionIdOrderByEffectiveAtAsc(50L))
                     .thenReturn(List.of(existing));

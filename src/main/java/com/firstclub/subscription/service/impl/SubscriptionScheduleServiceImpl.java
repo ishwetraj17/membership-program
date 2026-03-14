@@ -64,11 +64,18 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
             throw SubscriptionException.scheduleEffectiveAtInPast();
         }
 
+        // Truncate to microseconds for both storage and comparison since
+        // PostgreSQL stores timestamps with microsecond precision.
+        // Without this, Java's nanosecond-precision values (e.g. 424122881 ns)
+        // get rounded by PostgreSQL to the nearest microsecond (e.g. 424123 µs),
+        // causing the duplicate check to miss a match when comparing the
+        // truncated request value (424122 µs) against the stored rounded
+        // value (424123 µs).
+        LocalDateTime requestEffective = request.getEffectiveAt().truncatedTo(ChronoUnit.MICROS);
+
         // Guard: no duplicate SCHEDULED entry at the same effectiveAt
         List<SubscriptionSchedule> existing = scheduleRepository
                 .findBySubscriptionIdOrderByEffectiveAtAsc(subscriptionId);
-        // Truncate to microseconds for comparison since PostgreSQL stores with microsecond precision
-        LocalDateTime requestEffective = request.getEffectiveAt().truncatedTo(ChronoUnit.MICROS);
         boolean conflict = existing.stream()
                 .filter(s -> s.getStatus() == SubscriptionScheduleStatus.SCHEDULED)
                 .anyMatch(s -> s.getEffectiveAt().truncatedTo(ChronoUnit.MICROS).equals(requestEffective));
@@ -77,6 +84,9 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
         }
 
         SubscriptionSchedule schedule = mapper.toEntity(request);
+        // Store the truncated value to ensure DB-stored precision matches
+        // the comparison precision used in the duplicate check above.
+        schedule.setEffectiveAt(requestEffective);
         schedule.setSubscription(subscription);
         schedule.setStatus(SubscriptionScheduleStatus.SCHEDULED);
 

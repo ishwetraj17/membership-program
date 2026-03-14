@@ -269,7 +269,6 @@ class RefundServiceV2Test {
             when(refundMutationGuard.acquireAndCheck(eq(PAYMENT_ID), any(BigDecimal.class)))
                     .thenThrow(new MembershipException("Refund amount exceeds refundable amount",
                             "OVER_REFUND", HttpStatus.UNPROCESSABLE_ENTITY));
-            when(refundV2Repository.findByRequestFingerprint(any())).thenReturn(Optional.empty()); // Phase 15: fingerprint check before lock
 
             // Request exceeds capturedAmount
             RefundCreateRequestDTO req = request(new BigDecimal("600.00"));
