@@ -4,17 +4,21 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Base class for integration tests that require a live PostgreSQL database.
  *
  * <p>A single {@link PostgreSQLContainer} is started once for the whole test run
- * (static field + {@code @Container}) and reused across all subclasses.  Spring's
+ * (static initialiser) and reused across all subclasses.  Spring's
  * {@link DynamicPropertySource} injects the container's JDBC URL / credentials
  * into the application context before the context is built, so they take
  * precedence over any profile-specific properties.
+ *
+ * <p>The container is started eagerly via a static initialiser (rather than the
+ * {@code @Container} lifecycle annotation) so that it is guaranteed to be
+ * running before Spring creates the application context — even when subclasses
+ * use {@code @TestInstance(Lifecycle.PER_CLASS)}, which causes
+ * {@code postProcessTestInstance} to run before {@code beforeAll}.
  *
  * <p>Flyway is intentionally disabled ({@code spring.flyway.enabled=false}) and
  * DDL is set to {@code create-drop} so that Hibernate creates the full schema from
@@ -34,17 +38,22 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * Implemented by Shwet Raj
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers(disabledWithoutDocker = true)
+@SpringBootTest(
+        classes = MembershipApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+)
 public abstract class PostgresIntegrationTestBase {
 
-    @Container
     @SuppressWarnings("resource")
     static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16")
                     .withDatabaseName("membershipdb")
                     .withUsername("membership_user")
                     .withPassword("membership_pass");
+
+    static {
+        POSTGRES.start();
+    }
 
     /**
      * Overrides the datasource and JPA properties with values from the running

@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * {@link com.firstclub.platform.integrity.IntegrityRunService#runAll} or
  * {@link com.firstclub.platform.integrity.IntegrityRunService#runSingle}.
  */
-@Entity
+@Entity(name = "PlatformIntegrityCheckRun")
 @Table(name = "integrity_check_runs",
        indexes = {
            @Index(name = "idx_icr_started_at", columnList = "started_at DESC"),
