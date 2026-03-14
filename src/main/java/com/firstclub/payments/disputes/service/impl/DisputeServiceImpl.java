@@ -61,20 +61,22 @@ public class DisputeServiceImpl implements DisputeService {
         // 2. Tenant isolation
         validateMerchantOwnership(merchantId, payment);
 
-        // 3. Only CAPTURED / PARTIALLY_REFUNDED payments can be disputed
+        // 3. One active dispute per payment — safe because Payment row is already locked,
+        //    so any concurrent openDispute is blocked until this transaction commits.
+        //    Checked before payment status so that a payment already in DISPUTED status
+        //    (because of a prior open dispute) returns 409 CONFLICT rather than 422.
+        if (disputeRepository.existsByPaymentIdAndStatusIn(paymentId, ACTIVE_STATUSES)) {
+            throw new MembershipException(
+                    "Payment " + paymentId + " already has an active dispute",
+                    "ACTIVE_DISPUTE_EXISTS", HttpStatus.CONFLICT);
+        }
+
+        // 4. Only CAPTURED / PARTIALLY_REFUNDED payments can be disputed
         if (!DISPUTABLE_STATUSES.contains(payment.getStatus())) {
             throw new MembershipException(
                     "Payment " + paymentId + " has status " + payment.getStatus()
                     + " and cannot be disputed",
                     "PAYMENT_NOT_DISPUTABLE", HttpStatus.UNPROCESSABLE_ENTITY);
-        }
-
-        // 4. One active dispute per payment — safe because Payment row is already locked,
-        //    so any concurrent openDispute is blocked until this transaction commits.
-        if (disputeRepository.existsByPaymentIdAndStatusIn(paymentId, ACTIVE_STATUSES)) {
-            throw new MembershipException(
-                    "Payment " + paymentId + " already has an active dispute",
-                    "ACTIVE_DISPUTE_EXISTS", HttpStatus.CONFLICT);
         }
 
         // 5. Capacity check via DisputeCapacityService (replaces inline computation)

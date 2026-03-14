@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -61,9 +62,11 @@ public class SubscriptionScheduleServiceImpl implements SubscriptionScheduleServ
         // Guard: no duplicate SCHEDULED entry at the same effectiveAt
         List<SubscriptionSchedule> existing = scheduleRepository
                 .findBySubscriptionIdOrderByEffectiveAtAsc(subscriptionId);
+        // Truncate to microseconds for comparison since PostgreSQL stores with microsecond precision
+        LocalDateTime requestEffective = request.getEffectiveAt().truncatedTo(ChronoUnit.MICROS);
         boolean conflict = existing.stream()
                 .filter(s -> s.getStatus() == SubscriptionScheduleStatus.SCHEDULED)
-                .anyMatch(s -> s.getEffectiveAt().equals(request.getEffectiveAt()));
+                .anyMatch(s -> s.getEffectiveAt().truncatedTo(ChronoUnit.MICROS).equals(requestEffective));
         if (conflict) {
             throw SubscriptionException.duplicateScheduleConflict(request.getEffectiveAt());
         }

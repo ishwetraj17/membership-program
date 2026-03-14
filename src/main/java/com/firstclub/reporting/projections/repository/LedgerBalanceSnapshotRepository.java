@@ -18,13 +18,13 @@ public interface LedgerBalanceSnapshotRepository extends JpaRepository<LedgerBal
     Optional<LedgerBalanceSnapshot> findByAccountIdAndSnapshotDateAndMerchantIdIsNull(Long accountId, LocalDate snapshotDate);
 
     /** Flexible filter query for the admin list endpoint. */
-    @Query("""
-            SELECT s FROM LedgerBalanceSnapshot s
-            WHERE (:merchantId IS NULL OR s.merchantId = :merchantId)
-              AND (:from       IS NULL OR s.snapshotDate >= :from)
-              AND (:to         IS NULL OR s.snapshotDate <= :to)
-            ORDER BY s.snapshotDate ASC, s.accountId ASC
-            """)
+    @Query(value = """
+            SELECT * FROM ledger_balance_snapshots s
+            WHERE (CAST(:merchantId AS BIGINT) IS NULL OR s.merchant_id = CAST(:merchantId AS BIGINT))
+              AND (CAST(:from AS DATE)         IS NULL OR s.snapshot_date >= CAST(:from AS DATE))
+              AND (CAST(:to AS DATE)           IS NULL OR s.snapshot_date <= CAST(:to AS DATE))
+            ORDER BY s.snapshot_date ASC, s.account_id ASC
+            """, nativeQuery = true)
     List<LedgerBalanceSnapshot> findWithFilters(
             @Param("merchantId") Long merchantId,
             @Param("from")       LocalDate from,

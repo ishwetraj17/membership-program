@@ -1,15 +1,18 @@
 package com.firstclub.platform.redis;
 
 import com.firstclub.membership.PostgresIntegrationTestBase;
+import com.firstclub.membership.dto.JwtResponseDTO;
+import com.firstclub.membership.dto.LoginRequestDTO;
 import com.firstclub.platform.ops.dto.RedisHealthStatusDTO;
 import com.firstclub.platform.redis.impl.RedisAvailabilityServiceImpl;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -39,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * is guaranteed to be running before Spring creates the application context.
  */
 @DisplayName("Redis Infrastructure — Integration Tests")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RedisIntegrationTest extends PostgresIntegrationTestBase {
 
     @SuppressWarnings("resource")
@@ -69,6 +73,17 @@ class RedisIntegrationTest extends PostgresIntegrationTestBase {
 
     @Autowired
     private TestRestTemplate testRestTemplate;
+
+    private String adminToken;
+
+    @BeforeAll
+    void authenticate() {
+        LoginRequestDTO login = LoginRequestDTO.builder()
+                .email("admin@firstclub.com").password("Admin@firstclub1").build();
+        ResponseEntity<JwtResponseDTO> auth = testRestTemplate.postForEntity(
+                "/api/v1/auth/login", login, JwtResponseDTO.class);
+        adminToken = auth.getBody().getToken();
+    }
 
     // ── Bean wiring ────────────────────────────────────────────────────────────
 
@@ -131,9 +146,11 @@ class RedisIntegrationTest extends PostgresIntegrationTestBase {
     @Test
     @DisplayName("GET /api/v2/admin/system/redis/health returns 200 with status UP")
     void redisHealthEndpoint_returns200WithStatusUp() {
-        ResponseEntity<RedisHealthStatusDTO> response = testRestTemplate
-                .withBasicAuth("admin", "admin123")
-                .getForEntity("/api/v2/admin/system/redis/health", RedisHealthStatusDTO.class);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        ResponseEntity<RedisHealthStatusDTO> response = testRestTemplate.exchange(
+                "/api/v2/admin/system/redis/health", HttpMethod.GET,
+                new HttpEntity<>(headers), RedisHealthStatusDTO.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();

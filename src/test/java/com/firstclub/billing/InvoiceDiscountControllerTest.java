@@ -7,6 +7,7 @@ import com.firstclub.billing.dto.InvoiceSummaryDTO;
 import com.firstclub.billing.entity.*;
 import com.firstclub.billing.model.InvoiceStatus;
 import com.firstclub.billing.repository.DiscountRepository;
+import com.firstclub.billing.repository.InvoiceLineRepository;
 import com.firstclub.billing.repository.InvoiceRepository;
 import com.firstclub.membership.PostgresIntegrationTestBase;
 import com.firstclub.membership.dto.JwtResponseDTO;
@@ -33,6 +34,7 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private InvoiceRepository invoiceRepository;
+    @Autowired private InvoiceLineRepository invoiceLineRepository;
     @Autowired private DiscountRepository discountRepository;
 
     private static final long MERCHANT_ID = 2001L;
@@ -59,7 +61,7 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
     }
 
     private Invoice createOpenInvoice(String amount) {
-        return invoiceRepository.save(Invoice.builder()
+        Invoice invoice = invoiceRepository.save(Invoice.builder()
                 .userId(USER_ID).merchantId(MERCHANT_ID)
                 .status(InvoiceStatus.OPEN)
                 .currency("INR")
@@ -69,6 +71,14 @@ class InvoiceDiscountControllerTest extends PostgresIntegrationTestBase {
                 .taxTotal(BigDecimal.ZERO).grandTotal(new BigDecimal(amount))
                 .dueDate(LocalDateTime.now().plusDays(7))
                 .build());
+        // Create a PLAN_CHARGE line so recomputeTotals() can derive the subtotal
+        invoiceLineRepository.save(InvoiceLine.builder()
+                .invoiceId(invoice.getId())
+                .lineType(InvoiceLineType.PLAN_CHARGE)
+                .description("Plan charge")
+                .amount(new BigDecimal(amount))
+                .build());
+        return invoice;
     }
 
     private Discount createActiveFixedDiscount(String code, String value) {
