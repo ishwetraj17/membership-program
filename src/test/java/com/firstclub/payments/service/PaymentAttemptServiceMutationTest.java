@@ -83,6 +83,25 @@ class PaymentAttemptServiceMutationTest {
         when(paymentAttemptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
+    // ── loadAttempt (private) — exercised via mark* methods ─────────────────
+
+    @Nested
+    @DisplayName("loadAttempt (attempt-not-found path)")
+    class LoadAttemptTests {
+
+        @Test
+        @DisplayName("throws ATTEMPT_NOT_FOUND when attempt ID / intent ID pair is missing")
+        void attemptNotFound_throws() {
+            when(paymentAttemptRepository.findByIdAndPaymentIntentId(ATTEMPT_ID, INTENT_ID))
+                    .thenReturn(Optional.empty());
+
+            // Kills: lambda$loadAttempt NullReturnValsMutator on line 152
+            assertThatThrownBy(() -> service.markAuthorized(ATTEMPT_ID, INTENT_ID, "ref"))
+                    .isInstanceOf(PaymentIntentException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "ATTEMPT_NOT_FOUND");
+        }
+    }
+
     // ── markAuthorized — 4 no-coverage mutants ────────────────────────────────
 
     @Nested
