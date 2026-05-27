@@ -8,14 +8,6 @@ import lombok.AllArgsConstructor;
 
 import jakarta.validation.constraints.*;
 
-/**
- * Data Transfer Object for User information
- * 
- * Used for API requests/responses to avoid exposing entity details.
- * Includes validation for Indian phone numbers and pincodes.
- * 
- * Implemented by Shwet Raj
- */
 @Data
 @Builder
 @NoArgsConstructor

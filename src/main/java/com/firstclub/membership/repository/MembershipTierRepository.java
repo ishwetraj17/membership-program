@@ -6,13 +6,6 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
-/**
- * Repository for MembershipTier operations
- * 
- * Handles CRUD operations for membership tiers (Silver, Gold, Platinum).
- * 
- * Implemented by Shwet Raj
- */
 @Repository
 public interface MembershipTierRepository extends JpaRepository<MembershipTier, Long> {
     

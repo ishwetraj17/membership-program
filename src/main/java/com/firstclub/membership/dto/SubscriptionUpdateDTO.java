@@ -7,14 +7,6 @@ import lombok.Builder;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
-/**
- * DTO for updating subscription settings
- * 
- * Supports updating auto-renewal, plan changes, and status changes.
- * Enhanced to provide comprehensive subscription management.
- * 
- * Implemented by Shwet Raj
- */
 @Data
 @Builder
 @NoArgsConstructor

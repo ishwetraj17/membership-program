@@ -6,14 +6,6 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
-/**
- * Repository for User entity operations
- * 
- * Standard JPA repository with custom methods for email lookup.
- * Email uniqueness is handled at database level.
- * 
- * Implemented by Shwet Raj
- */
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
     

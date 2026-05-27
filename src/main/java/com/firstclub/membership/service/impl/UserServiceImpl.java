@@ -16,14 +16,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-/**
- * Implementation of UserService
- * 
- * Handles user CRUD operations with validation.
- * Includes email uniqueness check and proper error handling.
- * 
- * Implemented by Shwet Raj
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -35,15 +27,10 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserDTO createUser(UserDTO userDTO) {
-        log.info("Creating new user with email: {}", userDTO.getEmail());
-        
-        // Check if email already exists
         if (userRepository.existsByEmail(userDTO.getEmail())) {
-            throw new MembershipException("Email already exists", "EMAIL_EXISTS");
+            throw new MembershipException("Email already registered", "EMAIL_EXISTS");
         }
-        
-        // Convert DTO to entity
-        User user = User.builder()
+        User saved = userRepository.save(User.builder()
             .name(userDTO.getName())
             .email(userDTO.getEmail())
             .phoneNumber(userDTO.getPhoneNumber())
@@ -51,29 +38,21 @@ public class UserServiceImpl implements UserService {
             .city(userDTO.getCity())
             .state(userDTO.getState())
             .pincode(userDTO.getPincode())
-            .status(User.UserStatus.ACTIVE) // New users are active by default
-            .build();
-            
-        User savedUser = userRepository.save(user);
-        log.info("User created successfully with ID: {}", savedUser.getId());
-        
-        return convertToDTO(savedUser);
+            .status(User.UserStatus.ACTIVE)
+            .build());
+        log.info("User created — id={} email={}", saved.getId(), saved.getEmail());
+        return convertToDTO(saved);
     }
 
     @Override
     public UserDTO updateUser(Long id, UserDTO userDTO) {
-        log.info("Updating user with ID: {}", id);
-        
         User user = userRepository.findById(id)
-            .orElseThrow(() -> new MembershipException("User not found", "USER_NOT_FOUND"));
-            
-        // Check if email is being changed and if new email already exists
-        if (!user.getEmail().equals(userDTO.getEmail()) && 
-            userRepository.existsByEmail(userDTO.getEmail())) {
-            throw new MembershipException("Email already exists", "EMAIL_EXISTS");
+            .orElseThrow(() -> MembershipException.userNotFound(id));
+
+        if (!user.getEmail().equals(userDTO.getEmail()) && userRepository.existsByEmail(userDTO.getEmail())) {
+            throw new MembershipException("Email already registered", "EMAIL_EXISTS");
         }
-        
-        // Update user fields
+
         user.setName(userDTO.getName());
         user.setEmail(userDTO.getEmail());
         user.setPhoneNumber(userDTO.getPhoneNumber());
@@ -81,38 +60,26 @@ public class UserServiceImpl implements UserService {
         user.setCity(userDTO.getCity());
         user.setState(userDTO.getState());
         user.setPincode(userDTO.getPincode());
-        
-        if (userDTO.getStatus() != null) {
-            user.setStatus(userDTO.getStatus());
-        }
-        
-        User updatedUser = userRepository.save(user);
-        log.info("User updated successfully: {}", updatedUser.getId());
-        
-        return convertToDTO(updatedUser);
+        if (userDTO.getStatus() != null) user.setStatus(userDTO.getStatus());
+
+        return convertToDTO(userRepository.save(user));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Optional<UserDTO> getUserById(Long id) {
-        log.debug("Fetching user by ID: {}", id);
-        
         return userRepository.findById(id).map(this::convertToDTO);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Optional<UserDTO> getUserByEmail(String email) {
-        log.debug("Fetching user by email: {}", email);
-        
         return userRepository.findByEmail(email).map(this::convertToDTO);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<UserDTO> getAllUsers() {
-        log.debug("Fetching all users");
-        
         return userRepository.findAll().stream()
             .map(this::convertToDTO)
             .collect(Collectors.toList());
@@ -120,36 +87,24 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void deleteUser(Long id) {
-        log.info("Deleting user with ID: {}", id);
-        
         User user = userRepository.findById(id)
-            .orElseThrow(() -> new MembershipException("User not found", "USER_NOT_FOUND"));
-            
-        // Check if user has active subscriptions before deletion
+            .orElseThrow(() -> MembershipException.userNotFound(id));
         if (subscriptionRepository.hasActiveSubscriptions(user, LocalDateTime.now())) {
             throw new MembershipException(
-                "Cannot delete user with active subscriptions. Please cancel all active subscriptions first.", 
-                "USER_HAS_ACTIVE_SUBSCRIPTIONS"
-            );
+                "Cancel all active subscriptions before deleting this account",
+                "USER_HAS_ACTIVE_SUBSCRIPTIONS");
         }
-        
         userRepository.delete(user);
-        log.info("User deleted successfully: {}", id);
+        log.info("User deleted — id={}", id);
     }
 
     @Override
     @Transactional(readOnly = true)
     public User findUserEntityById(Long id) {
         return userRepository.findById(id)
-            .orElseThrow(() -> new MembershipException("User not found", "USER_NOT_FOUND"));
+            .orElseThrow(() -> MembershipException.userNotFound(id));
     }
 
-    /**
-     * Convert User entity to DTO
-     * 
-     * Helper method to transform entity to DTO for API responses.
-     * NOTE: This works but could be optimized with MapStruct later
-     */
     private UserDTO convertToDTO(User user) {
         return UserDTO.builder()
             .id(user.getId())

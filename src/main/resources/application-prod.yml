@@ -8,6 +8,16 @@ spring:
   flyway:
     clean-disabled: true  # Never allow flyway:clean in production
 
+# Restrict actuator exposure in prod — only /actuator/health for load-balancer checks
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never  # Don't leak system internals to unauthenticated callers
+
 logging:
   level:
     root: WARN

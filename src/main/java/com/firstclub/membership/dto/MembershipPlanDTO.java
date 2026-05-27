@@ -8,14 +8,6 @@ import lombok.AllArgsConstructor;
 
 import java.math.BigDecimal;
 
-/**
- * DTO for membership plan information with benefits
- * 
- * Combines plan details with tier benefits for easy API consumption.
- * Shows pricing in INR and savings calculations.
- * 
- * Implemented by Shwet Raj
- */
 @Data
 @Builder
 @NoArgsConstructor

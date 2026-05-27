@@ -11,14 +11,6 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * User entity for storing customer information
- * 
- * Stores basic user details with Indian-specific validation.
- * Phone numbers follow Indian format (10 digits starting with 6-9).
- * 
- * Implemented by Shwet Raj
- */
 @Entity
 @Table(name = "users")
 @Data
@@ -37,7 +29,6 @@ public class User {
     @Column(nullable = false)
     private String name;
 
-    // Indian phone number format - 10 digits starting with 6-9
     @Column(nullable = false)
     private String phoneNumber;
 
@@ -50,7 +41,6 @@ public class User {
     @Column(nullable = false)
     private String state;
 
-    // Indian pincode - 6 digits
     @Column(nullable = false)
     private String pincode;
 
@@ -58,7 +48,6 @@ public class User {
     @Column(nullable = false)
     private UserStatus status;
 
-    // One user can have multiple subscriptions over time
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<Subscription> subscriptions;
 
@@ -70,15 +59,5 @@ public class User {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    /**
-     * User account status
-     * ACTIVE - can use all features
-     * INACTIVE - temporarily disabled
-     * SUSPENDED - blocked due to violations
-     */
-    public enum UserStatus {
-        ACTIVE,
-        INACTIVE,
-        SUSPENDED
-    }
+    public enum UserStatus { ACTIVE, INACTIVE, SUSPENDED }
 }

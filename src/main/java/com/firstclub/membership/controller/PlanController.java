@@ -5,13 +5,10 @@ import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.service.PlanService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,182 +19,95 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/plans")
 @RequiredArgsConstructor
-@Slf4j
-@Tag(name = "Plan Discovery", description = "APIs for discovering and comparing membership plans")
+@Tag(name = "Plan Discovery", description = "Browse and compare membership plans before subscribing")
 public class PlanController {
 
     private final PlanService planService;
-    
+
     @GetMapping
-    @Operation(
-        summary = "Get all available plans", 
-        description = "Retrieve all available membership plans with pricing, benefits, and savings calculations. Use this endpoint to show plan options to users before subscription."
-    )
-    @ApiResponse(
-        responseCode = "200", 
-        description = "Plans retrieved successfully",
-        content = @Content(schema = @Schema(implementation = MembershipPlanDTO.class))
-    )
+    @Operation(summary = "All active plans", description = "Returns all 9 plans (3 tiers × 3 durations) with pricing and savings calculations.")
+    @ApiResponse(responseCode = "200", description = "OK")
     public ResponseEntity<List<MembershipPlanDTO>> getAllPlans() {
-        List<MembershipPlanDTO> plans = planService.getActivePlans();
-        log.info("Retrieved {} available plans for user selection", plans.size());
-        return ResponseEntity.ok(plans);
+        return ResponseEntity.ok(planService.getActivePlans());
     }
-    
+
     @GetMapping("/grouped")
-    @Operation(
-        summary = "Get plans grouped by tier and duration", 
-        description = "Get all plans organized by tier (Silver/Gold/Platinum) and duration (Monthly/Quarterly/Yearly) for easy comparison"
-    )
-    @ApiResponse(responseCode = "200", description = "Grouped plans retrieved successfully")
+    @Operation(summary = "Plans grouped by tier and duration", description = "Returns a nested map of tier → duration → plan, useful for building a plan comparison table.")
+    @ApiResponse(responseCode = "200", description = "OK")
     public ResponseEntity<Map<String, Map<String, MembershipPlanDTO>>> getGroupedPlans() {
         List<MembershipPlanDTO> plans = planService.getActivePlans();
-        
-        // Group by tier, then by duration type
-        Map<String, Map<String, MembershipPlanDTO>> groupedPlans = plans.stream()
+        Map<String, Map<String, MembershipPlanDTO>> grouped = plans.stream()
             .collect(Collectors.groupingBy(
                 MembershipPlanDTO::getTier,
-                Collectors.toMap(
-                    plan -> plan.getType().name(),
-                    plan -> plan,
-                    (existing, replacement) -> existing
-                )
-            ));
-            
-        log.info("Retrieved plans grouped by {} tiers", groupedPlans.size());
-        return ResponseEntity.ok(groupedPlans);
+                Collectors.toMap(p -> p.getType().name(), p -> p, (a, b) -> a)));
+        return ResponseEntity.ok(grouped);
     }
-    
+
     @GetMapping("/tier/{tierName}")
-    @Operation(
-        summary = "Get plans by tier", 
-        description = "Get all available duration options (Monthly/Quarterly/Yearly) for a specific tier"
-    )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "Plans for tier retrieved successfully"),
+    @Operation(summary = "Plans by tier", description = "Returns all duration options for the given tier name (SILVER, GOLD, PLATINUM).")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "OK"),
         @ApiResponse(responseCode = "404", description = "Tier not found")
     })
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTier(
-            @Parameter(description = "Membership tier name", example = "GOLD") 
-            @PathVariable String tierName) {
-        List<MembershipPlanDTO> plans = planService.getPlansByTier(tierName);
-        log.info("Retrieved {} plan duration options for tier: {}", plans.size(), tierName);
-        return ResponseEntity.ok(plans);
+            @Parameter(description = "Tier name", example = "GOLD") @PathVariable String tierName) {
+        return ResponseEntity.ok(planService.getPlansByTier(tierName));
     }
-    
-    @GetMapping("/duration/{type}")
-    @Operation(
-        summary = "Get plans by duration type", 
-        description = "Get all tier options (Silver/Gold/Platinum) for a specific duration type"
-    )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "Plans for duration type retrieved successfully"),
-        @ApiResponse(responseCode = "400", description = "Invalid duration type")
-    })
-    public ResponseEntity<List<MembershipPlanDTO>> getPlansByDuration(
-            @Parameter(description = "Plan duration type", example = "YEARLY") 
-            @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
-        log.info("Retrieved {} tier options for duration: {}", plans.size(), type);
-        return ResponseEntity.ok(plans);
-    }
-    
+
     @GetMapping("/type/{type}")
-    @Operation(
-        summary = "Get plans by type", 
-        description = "Get all tier options (Silver/Gold/Platinum) for a specific plan type (alias for /duration)"
-    )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "Plans for type retrieved successfully"),
-        @ApiResponse(responseCode = "400", description = "Invalid plan type")
+    @Operation(summary = "Plans by duration type", description = "Returns all tier options for the given duration type (MONTHLY, QUARTERLY, YEARLY).")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "OK"),
+        @ApiResponse(responseCode = "400", description = "Invalid type")
     })
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByType(
-            @Parameter(description = "Plan type", example = "MONTHLY") 
-            @PathVariable MembershipPlan.PlanType type) {
-        List<MembershipPlanDTO> plans = planService.getPlansByType(type);
-        log.info("Retrieved {} tier options for plan type: {}", plans.size(), type);
-        return ResponseEntity.ok(plans);
+            @Parameter(description = "Plan type", example = "YEARLY") @PathVariable MembershipPlan.PlanType type) {
+        return ResponseEntity.ok(planService.getPlansByType(type));
     }
-    
+
     @GetMapping("/{id}")
-    @Operation(
-        summary = "Get detailed plan information", 
-        description = "Get comprehensive details for a specific plan including pricing, benefits, and tier information"
-    )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "Plan details retrieved successfully"),
+    @Operation(summary = "Plan details by ID")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Plan found"),
         @ApiResponse(responseCode = "404", description = "Plan not found")
     })
-    public ResponseEntity<MembershipPlanDTO> getPlanDetails(
-            @Parameter(description = "Plan ID", example = "1") 
-            @PathVariable Long id) {
+    public ResponseEntity<MembershipPlanDTO> getPlanById(
+            @Parameter(description = "Plan ID", example = "1") @PathVariable Long id) {
         return planService.getPlanById(id)
-            .map(plan -> {
-                log.info("Retrieved details for plan: {} ({})", plan.getName(), plan.getId());
-                return ResponseEntity.ok(plan);
-            })
-            .orElse(ResponseEntity.notFound().build());
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
-    
+
     @GetMapping("/compare")
-    @Operation(
-        summary = "Compare multiple plans", 
-        description = "Compare features and pricing of multiple plans side by side"
-    )
-    @ApiResponse(responseCode = "200", description = "Plan comparison data retrieved successfully")
+    @Operation(summary = "Compare plans side by side", description = "Pass comma-separated plan IDs to retrieve them together for comparison.")
+    @ApiResponse(responseCode = "200", description = "OK")
     public ResponseEntity<List<MembershipPlanDTO>> comparePlans(
-            @Parameter(description = "Comma-separated list of plan IDs", example = "1,2,3") 
-            @RequestParam String planIds) {
-        
-        List<Long> ids = List.of(planIds.split(","))
-            .stream()
-            .map(String::trim)
-            .map(Long::valueOf)
-            .toList();
-            
-        List<MembershipPlanDTO> comparisonPlans = ids.stream()
+            @Parameter(description = "Comma-separated plan IDs", example = "1,4,7") @RequestParam String planIds) {
+        List<MembershipPlanDTO> plans = java.util.Arrays.stream(planIds.split(","))
+            .map(s -> Long.valueOf(s.trim()))
             .map(planService::getPlanById)
             .filter(java.util.Optional::isPresent)
             .map(java.util.Optional::get)
             .toList();
-            
-        log.info("Comparing {} plans for user evaluation", comparisonPlans.size());
-        return ResponseEntity.ok(comparisonPlans);
+        return ResponseEntity.ok(plans);
     }
-    
+
     @GetMapping("/recommendations")
-    @Operation(
-        summary = "Get plan recommendations", 
-        description = "Get recommended plans based on popularity and value for money"
-    )
-    @ApiResponse(responseCode = "200", description = "Plan recommendations retrieved successfully")
-    public ResponseEntity<Map<String, Object>> getPlanRecommendations() {
-        List<MembershipPlanDTO> allPlans = planService.getActivePlans();
-        
-        // Find most popular tier (this would normally come from analytics)
-        // For now, recommend Gold tier as a balanced option
-        
-        Map<String, Object> recommendations = Map.of(
-            "mostPopular", allPlans.stream()
+    @Operation(summary = "Recommended plans", description = "Returns opinionated plan picks: most popular (Gold Yearly), best value (highest savings), and beginner-friendly (Silver Monthly).")
+    @ApiResponse(responseCode = "200", description = "OK")
+    public ResponseEntity<Map<String, Object>> getRecommendations() {
+        List<MembershipPlanDTO> all = planService.getActivePlans();
+        return ResponseEntity.ok(Map.of(
+            "mostPopular", all.stream()
                 .filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.YEARLY)
-                .findFirst()
-                .orElse(null),
-            "bestValue", allPlans.stream()
+                .findFirst().orElse(null),
+            "bestValue", all.stream()
                 .filter(p -> p.getType() == MembershipPlan.PlanType.YEARLY)
-                .max((p1, p2) -> p1.getSavings().compareTo(p2.getSavings()))
+                .max(java.util.Comparator.comparing(MembershipPlanDTO::getSavings))
                 .orElse(null),
-            "beginnerFriendly", allPlans.stream()
+            "beginnerFriendly", all.stream()
                 .filter(p -> "SILVER".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
-                .findFirst()
-                .orElse(null),
-            "explanation", Map.of(
-                "mostPopular", "Gold yearly plan offers best balance of features and savings",
-                "bestValue", "Yearly plans provide maximum savings compared to monthly billing",
-                "beginnerFriendly", "Silver monthly plan allows you to try our service with minimal commitment"
-            )
-        );
-        
-        log.info("Generated plan recommendations for user guidance");
-        return ResponseEntity.ok(recommendations);
+                .findFirst().orElse(null)
+        ));
     }
 }

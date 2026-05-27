@@ -9,14 +9,6 @@ import lombok.AllArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/**
- * DTO for subscription details with user and plan information
- * 
- * Complete subscription view including user details, plan benefits,
- * and current status for API responses.
- * 
- * Implemented by Shwet Raj
- */
 @Data
 @Builder
 @NoArgsConstructor

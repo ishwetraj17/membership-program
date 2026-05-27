@@ -3,17 +3,6 @@ package com.firstclub.membership.exception;
 import lombok.Getter;
 import org.springframework.http.HttpStatus;
 
-/**
- * Custom exception for membership-related errors with HTTP status mapping
- * 
- * Enhanced exception handling with:
- * - Error codes for client identification
- * - HTTP status mapping for proper REST responses
- * - Detailed error messages for debugging
- * - Predefined common error types
- * 
- * Implemented by Shwet Raj
- */
 @Getter
 public class MembershipException extends RuntimeException {
 
@@ -39,8 +28,6 @@ public class MembershipException extends RuntimeException {
         this.errorCode = errorCode;
         this.httpStatus = httpStatus;
     }
-    
-    // Predefined exception factory methods for common scenarios
     
     public static MembershipException userNotFound(Long userId) {
         return new MembershipException(
