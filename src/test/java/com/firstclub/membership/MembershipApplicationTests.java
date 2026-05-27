@@ -5,6 +5,8 @@ import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.PlanService;
+import com.firstclub.membership.service.SubscriptionService;
 import com.firstclub.membership.service.TierEvaluationService;
 import com.firstclub.membership.service.UserService;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +49,8 @@ import static org.assertj.core.api.Assertions.*;
 class MembershipApplicationTests {
 
     @Autowired private MembershipService membershipService;
+    @Autowired private PlanService planService;
+    @Autowired private SubscriptionService subscriptionService;
     @Autowired private UserService userService;
     @Autowired private TierEvaluationService tierEvaluationService;
     @Autowired private TestRestTemplate restTemplate;
@@ -81,6 +85,8 @@ class MembershipApplicationTests {
         @Test @DisplayName("Spring context loads")
         void contextLoads() {
             assertThat(membershipService).isNotNull();
+            assertThat(planService).isNotNull();
+            assertThat(subscriptionService).isNotNull();
             assertThat(userService).isNotNull();
             assertThat(tierEvaluationService).isNotNull();
         }
@@ -95,7 +101,7 @@ class MembershipApplicationTests {
 
         @Test @DisplayName("9 plans are initialised (3 tiers × 3 durations)")
         void plansInitialised() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             assertThat(plans).hasSize(9);
 
             long monthly   = plans.stream().filter(p -> p.getType() == MembershipPlan.PlanType.MONTHLY).count();
@@ -117,7 +123,7 @@ class MembershipApplicationTests {
 
         @Test @DisplayName("Tier pricing hierarchy: Silver < Gold < Platinum")
         void pricingHierarchy() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
 
             BigDecimal silver = monthly(plans, "SILVER");
             BigDecimal gold   = monthly(plans, "GOLD");
@@ -129,7 +135,7 @@ class MembershipApplicationTests {
 
         @Test @DisplayName("Yearly plans save money vs. 12× monthly")
         void yearlySavings() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
 
             MembershipPlanDTO silverMonthly = planOf(plans, "SILVER", MembershipPlan.PlanType.MONTHLY);
             MembershipPlanDTO silverYearly  = planOf(plans, "SILVER", MembershipPlan.PlanType.YEARLY);
@@ -141,7 +147,7 @@ class MembershipApplicationTests {
 
         @Test @DisplayName("Tier levels are 1/2/3 for Silver/Gold/Platinum")
         void tierLevels() {
-            List<MembershipPlanDTO> plans = membershipService.getActivePlans();
+            List<MembershipPlanDTO> plans = planService.getActivePlans();
             plans.stream().filter(p -> p.getTier().equals("SILVER")).forEach(p -> assertThat(p.getTierLevel()).isEqualTo(1));
             plans.stream().filter(p -> p.getTier().equals("GOLD")).forEach(p -> assertThat(p.getTierLevel()).isEqualTo(2));
             plans.stream().filter(p -> p.getTier().equals("PLATINUM")).forEach(p -> assertThat(p.getTierLevel()).isEqualTo(3));
@@ -205,7 +211,7 @@ class MembershipApplicationTests {
             UserDTO user = userService.createUser(testUser("Sub User", "sub"));
             MembershipPlanDTO plan = silverMonthly();
 
-            SubscriptionDTO sub = membershipService.createSubscription(
+            SubscriptionDTO sub = subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(plan.getId()).autoRenewal(true).build());
 
             assertThat(sub.getId()).isNotNull();
@@ -219,9 +225,9 @@ class MembershipApplicationTests {
             SubscriptionRequestDTO req = SubscriptionRequestDTO.builder()
                     .userId(user.getId()).planId(silverMonthly().getId()).autoRenewal(true).build();
 
-            membershipService.createSubscription(req);
+            subscriptionService.createSubscription(req);
 
-            assertThatThrownBy(() -> membershipService.createSubscription(req))
+            assertThatThrownBy(() -> subscriptionService.createSubscription(req))
                     .isInstanceOf(MembershipException.class)
                     .hasMessageContaining("already has an active subscription");
         }
@@ -229,10 +235,10 @@ class MembershipApplicationTests {
         @Test @DisplayName("Cancel subscription")
         void cancelSubscription() {
             UserDTO user = userService.createUser(testUser("Cancel User", "cancel"));
-            SubscriptionDTO sub = membershipService.createSubscription(
+            SubscriptionDTO sub = subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(silverMonthly().getId()).autoRenewal(true).build());
 
-            SubscriptionDTO cancelled = membershipService.cancelSubscription(sub.getId(), "Test cancellation");
+            SubscriptionDTO cancelled = subscriptionService.cancelSubscription(sub.getId(), "Test cancellation");
 
             assertThat(cancelled.getStatus()).isEqualTo(Subscription.SubscriptionStatus.CANCELLED);
             assertThat(cancelled.getCancellationReason()).isEqualTo("Test cancellation");
@@ -243,11 +249,11 @@ class MembershipApplicationTests {
         @Test @DisplayName("Cannot cancel already-cancelled subscription")
         void cancelNonActive() {
             UserDTO user = userService.createUser(testUser("Cancel2 User", "cancel2"));
-            SubscriptionDTO sub = membershipService.createSubscription(
+            SubscriptionDTO sub = subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(silverMonthly().getId()).autoRenewal(true).build());
-            membershipService.cancelSubscription(sub.getId(), "First");
+            subscriptionService.cancelSubscription(sub.getId(), "First");
 
-            assertThatThrownBy(() -> membershipService.cancelSubscription(sub.getId(), "Second"))
+            assertThatThrownBy(() -> subscriptionService.cancelSubscription(sub.getId(), "Second"))
                     .isInstanceOf(MembershipException.class);
         }
 
@@ -255,10 +261,10 @@ class MembershipApplicationTests {
         void getActive() {
             UserDTO user = userService.createUser(testUser("Active User", "active"));
             MembershipPlanDTO goldPlan = planOf("GOLD", MembershipPlan.PlanType.MONTHLY);
-            membershipService.createSubscription(
+            subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(goldPlan.getId()).autoRenewal(true).build());
 
-            Optional<SubscriptionDTO> active = membershipService.getActiveSubscription(user.getId());
+            Optional<SubscriptionDTO> active = subscriptionService.getActiveSubscription(user.getId());
             assertThat(active).isPresent();
             assertThat(active.get().getTier()).isEqualTo("GOLD");
         }
@@ -268,7 +274,7 @@ class MembershipApplicationTests {
         }
 
         private MembershipPlanDTO planOf(String tier, MembershipPlan.PlanType type) {
-            return membershipService.getActivePlans().stream()
+            return planService.getActivePlans().stream()
                     .filter(p -> p.getTier().equals(tier) && p.getType() == type)
                     .findFirst()
                     .orElseThrow();
@@ -304,7 +310,7 @@ class MembershipApplicationTests {
 
         @Test @DisplayName("User not found throws MembershipException")
         void userNotFound() {
-            assertThatThrownBy(() -> membershipService.getUserSubscriptions(99999L))
+            assertThatThrownBy(() -> subscriptionService.getUserSubscriptions(99999L))
                     .isInstanceOf(MembershipException.class)
                     .hasMessageContaining("not found");
         }
@@ -312,14 +318,14 @@ class MembershipApplicationTests {
         @Test @DisplayName("Plan not found throws MembershipException")
         void planNotFound() {
             UserDTO user = userService.createUser(testUser("Exception User", "exc"));
-            assertThatThrownBy(() -> membershipService.createSubscription(
+            assertThatThrownBy(() -> subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(99999L).autoRenewal(true).build()))
                     .isInstanceOf(MembershipException.class);
         }
 
         @Test @DisplayName("Subscription not found throws MembershipException")
         void subscriptionNotFound() {
-            assertThatThrownBy(() -> membershipService.cancelSubscription(99999L, "Test"))
+            assertThatThrownBy(() -> subscriptionService.cancelSubscription(99999L, "Test"))
                     .isInstanceOf(MembershipException.class)
                     .hasMessageContaining("not found");
         }
@@ -365,7 +371,7 @@ class MembershipApplicationTests {
         @Test @DisplayName("POST /subscriptions — creates subscription")
         void createSubscriptionApi() {
             UserDTO user = userService.createUser(testUser("SubAPI User", "subapi"));
-            MembershipPlanDTO plan = membershipService.getActivePlans().stream()
+            MembershipPlanDTO plan = planService.getActivePlans().stream()
                     .filter(p -> p.getTier().equals("SILVER") && p.getType() == MembershipPlan.PlanType.MONTHLY)
                     .findFirst().orElseThrow();
 
@@ -413,8 +419,8 @@ class MembershipApplicationTests {
         @Test @DisplayName("PUT /subscriptions/{id}/cancel — cancels subscription")
         void cancelSubscriptionApi() {
             UserDTO user = userService.createUser(testUser("Cancel API User", "cancelapi"));
-            MembershipPlanDTO plan = membershipService.getActivePlans().get(0);
-            SubscriptionDTO sub = membershipService.createSubscription(
+            MembershipPlanDTO plan = planService.getActivePlans().get(0);
+            SubscriptionDTO sub = subscriptionService.createSubscription(
                     SubscriptionRequestDTO.builder().userId(user.getId()).planId(plan.getId()).autoRenewal(true).build());
 
             Map<String, String> body = new HashMap<>();

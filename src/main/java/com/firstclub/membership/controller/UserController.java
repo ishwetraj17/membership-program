@@ -3,7 +3,7 @@ package com.firstclub.membership.controller;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.User;
 import com.firstclub.membership.exception.MembershipException;
-import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.SubscriptionService;
 import com.firstclub.membership.service.TierEvaluationService;
 import com.firstclub.membership.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -29,7 +29,7 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
-    private final MembershipService membershipService;
+    private final SubscriptionService subscriptionService;
     private final TierEvaluationService tierEvaluationService;
 
     // ─── User CRUD ────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ public class UserController {
     @Operation(summary = "Get user's active subscription")
     public ResponseEntity<SubscriptionDTO> getActiveSubscription(@PathVariable Long userId) {
         requireUser(userId);
-        return membershipService.getActiveSubscription(userId)
+        return subscriptionService.getActiveSubscription(userId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -125,7 +125,7 @@ public class UserController {
     @Operation(summary = "Get user's subscription history")
     public ResponseEntity<List<SubscriptionDTO>> getUserSubscriptions(@PathVariable Long userId) {
         requireUser(userId);
-        return ResponseEntity.ok(membershipService.getUserSubscriptions(userId));
+        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId));
     }
 
     @PostMapping("/{userId}/subscriptions")
@@ -139,7 +139,7 @@ public class UserController {
             @Valid @RequestBody SubscriptionRequestDTO request) {
         requireUser(userId);
         request.setUserId(userId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(membershipService.createSubscription(request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
     }
 
     @PutMapping("/{userId}/subscriptions/{subscriptionId}")
@@ -149,7 +149,7 @@ public class UserController {
             @PathVariable Long subscriptionId,
             @Valid @RequestBody SubscriptionUpdateDTO updateDTO) {
         requireUserOwnsSubscription(userId, subscriptionId);
-        return ResponseEntity.ok(membershipService.updateSubscription(subscriptionId, updateDTO));
+        return ResponseEntity.ok(subscriptionService.updateSubscription(subscriptionId, updateDTO));
     }
 
     @PutMapping("/{userId}/subscriptions/{subscriptionId}/upgrade")
@@ -159,7 +159,7 @@ public class UserController {
             @PathVariable Long subscriptionId,
             @RequestBody Map<String, Long> body) {
         requireUserOwnsSubscription(userId, subscriptionId);
-        return ResponseEntity.ok(membershipService.upgradeSubscription(subscriptionId, body.get("newPlanId")));
+        return ResponseEntity.ok(subscriptionService.upgradeSubscription(subscriptionId, body.get("newPlanId")));
     }
 
     @PostMapping("/{userId}/subscriptions/{subscriptionId}/cancel")
@@ -171,7 +171,7 @@ public class UserController {
         requireUserOwnsSubscription(userId, subscriptionId);
         String reason = body != null ? body.getOrDefault("reason", "User requested cancellation")
                                      : "User requested cancellation";
-        return ResponseEntity.ok(membershipService.cancelSubscription(subscriptionId, reason));
+        return ResponseEntity.ok(subscriptionService.cancelSubscription(subscriptionId, reason));
     }
 
     // ─── Tier eligibility ─────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ public class UserController {
 
     private void requireUserOwnsSubscription(Long userId, Long subscriptionId) {
         requireUser(userId);
-        boolean owned = membershipService.getUserSubscriptions(userId).stream()
+        boolean owned = subscriptionService.getUserSubscriptions(userId).stream()
                 .anyMatch(s -> s.getId().equals(subscriptionId));
         if (!owned) {
             throw MembershipException.subscriptionNotOwnedByUser(subscriptionId, userId);

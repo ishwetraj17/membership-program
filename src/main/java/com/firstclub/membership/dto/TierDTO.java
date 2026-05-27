@@ -6,11 +6,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
-/**
- * Public view of a membership tier — decouples the API contract from the
- * persistence model so the controller layer never depends on JPA entities.
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -29,4 +26,5 @@ public class TierDTO {
     private Integer maxCouponsPerMonth;
     private Integer deliveryDays;
     private String additionalBenefits;
+    private List<String> benefits;
 }

@@ -3,6 +3,7 @@ package com.firstclub.membership.repository;
 import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -31,10 +32,14 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
            "AND s.status = 'ACTIVE' AND s.endDate > :now")
     boolean hasActiveSubscriptions(@Param("user") User user, @Param("now") LocalDateTime now);
 
-    /**
-     * Fetches active subscriptions that have passed their end date in a single
-     * indexed query — replaces the previous full-table scan + in-memory filter.
-     */
     @Query("SELECT s FROM Subscription s WHERE s.status = 'ACTIVE' AND s.endDate < :now")
     List<Subscription> findExpiredActiveSubscriptions(@Param("now") LocalDateTime now);
+
+    /**
+     * Single UPDATE statement — avoids loading expired rows into memory.
+     * Bypasses @Version intentionally: the scheduler is the sole writer for expiry.
+     */
+    @Modifying
+    @Query("UPDATE Subscription s SET s.status = 'EXPIRED' WHERE s.status = 'ACTIVE' AND s.endDate < :now")
+    int bulkExpireSubscriptions(@Param("now") LocalDateTime now);
 }

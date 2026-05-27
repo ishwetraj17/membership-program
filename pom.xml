@@ -111,6 +111,16 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Spring Cache + Caffeine — for plan and tier caching -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- API Documentation -->
         <dependency>
             <groupId>org.springdoc</groupId>

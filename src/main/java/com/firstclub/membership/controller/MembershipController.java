@@ -4,6 +4,8 @@ import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.service.MembershipService;
+import com.firstclub.membership.service.PlanService;
+import com.firstclub.membership.service.SubscriptionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -12,6 +14,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +37,8 @@ import java.util.stream.Collectors;
 public class MembershipController {
 
     private final MembershipService membershipService;
+    private final PlanService planService;
+    private final SubscriptionService subscriptionService;
 
     // ─── Plans ────────────────────────────────────────────────────────────────
 
@@ -39,7 +46,7 @@ public class MembershipController {
     @Operation(summary = "Get all active plans")
     @ApiResponse(responseCode = "200", description = "Plans retrieved")
     public ResponseEntity<List<MembershipPlanDTO>> getAllPlans() {
-        return ResponseEntity.ok(membershipService.getActivePlans());
+        return ResponseEntity.ok(planService.getActivePlans());
     }
 
     @GetMapping("/plans/tier/{tierName}")
@@ -50,20 +57,20 @@ public class MembershipController {
     })
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTier(
             @Parameter(example = "GOLD") @PathVariable String tierName) {
-        return ResponseEntity.ok(membershipService.getPlansByTier(tierName));
+        return ResponseEntity.ok(planService.getPlansByTier(tierName));
     }
 
     @GetMapping("/plans/tier-id/{tierId}")
     @Operation(summary = "Get plans by tier ID")
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByTierId(@PathVariable Long tierId) {
-        return ResponseEntity.ok(membershipService.getPlansByTierId(tierId));
+        return ResponseEntity.ok(planService.getPlansByTierId(tierId));
     }
 
     @GetMapping("/plans/type/{type}")
     @Operation(summary = "Get plans by duration type")
     public ResponseEntity<List<MembershipPlanDTO>> getPlansByType(
             @Parameter(example = "YEARLY") @PathVariable MembershipPlan.PlanType type) {
-        return ResponseEntity.ok(membershipService.getPlansByType(type));
+        return ResponseEntity.ok(planService.getPlansByType(type));
     }
 
     @GetMapping("/plans/{id}")
@@ -73,12 +80,12 @@ public class MembershipController {
         @ApiResponse(responseCode = "404", description = "Plan not found")
     })
     public ResponseEntity<MembershipPlanDTO> getPlanById(@PathVariable Long id) {
-        return membershipService.getPlanById(id)
+        return planService.getPlanById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // ─── Tiers ───────────────────────────────────────────────────────────────
+    // ─── Tiers ────────────────────────────────────────────────────────────────
 
     @GetMapping("/tiers")
     @Operation(summary = "Get all membership tiers")
@@ -117,19 +124,20 @@ public class MembershipController {
         @ApiResponse(responseCode = "409", description = "User already has active subscription")
     })
     public ResponseEntity<SubscriptionDTO> createSubscription(@Valid @RequestBody SubscriptionRequestDTO request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(membershipService.createSubscription(request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
     }
 
     @GetMapping("/subscriptions")
-    @Operation(summary = "Get all subscriptions (admin)")
-    public ResponseEntity<List<SubscriptionDTO>> getAllSubscriptions() {
-        return ResponseEntity.ok(membershipService.getAllSubscriptions());
+    @Operation(summary = "Get all subscriptions — paginated (admin)")
+    public ResponseEntity<Page<SubscriptionDTO>> getAllSubscriptions(
+            @PageableDefault(size = 20, sort = "id") Pageable pageable) {
+        return ResponseEntity.ok(subscriptionService.getAllSubscriptions(pageable));
     }
 
     @GetMapping("/subscriptions/user/{userId}")
     @Operation(summary = "Get all subscriptions for a user")
     public ResponseEntity<List<SubscriptionDTO>> getUserSubscriptions(@PathVariable Long userId) {
-        return ResponseEntity.ok(membershipService.getUserSubscriptions(userId));
+        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId));
     }
 
     @GetMapping("/subscriptions/user/{userId}/active")
@@ -139,7 +147,7 @@ public class MembershipController {
         @ApiResponse(responseCode = "404", description = "No active subscription")
     })
     public ResponseEntity<SubscriptionDTO> getActiveSubscription(@PathVariable Long userId) {
-        return membershipService.getActiveSubscription(userId)
+        return subscriptionService.getActiveSubscription(userId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -149,7 +157,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> updateSubscription(
             @PathVariable Long id,
             @RequestBody SubscriptionUpdateDTO updateDTO) {
-        return ResponseEntity.ok(membershipService.updateSubscription(id, updateDTO));
+        return ResponseEntity.ok(subscriptionService.updateSubscription(id, updateDTO));
     }
 
     @PutMapping("/subscriptions/{id}/cancel")
@@ -159,13 +167,13 @@ public class MembershipController {
             @RequestBody(required = false) Map<String, String> body) {
         String reason = body != null ? body.getOrDefault("reason", "User requested cancellation")
                                      : "User requested cancellation";
-        return ResponseEntity.ok(membershipService.cancelSubscription(id, reason));
+        return ResponseEntity.ok(subscriptionService.cancelSubscription(id, reason));
     }
 
     @PostMapping("/subscriptions/{id}/renew")
     @Operation(summary = "Renew expired subscription")
     public ResponseEntity<SubscriptionDTO> renewSubscription(@PathVariable Long id) {
-        return ResponseEntity.ok(membershipService.renewSubscription(id));
+        return ResponseEntity.ok(subscriptionService.renewSubscription(id));
     }
 
     @PutMapping("/subscriptions/{id}/upgrade")
@@ -173,7 +181,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> upgradeSubscription(
             @PathVariable Long id,
             @RequestBody Map<String, Long> body) {
-        return ResponseEntity.ok(membershipService.upgradeSubscription(id, body.get("newPlanId")));
+        return ResponseEntity.ok(subscriptionService.upgradeSubscription(id, body.get("newPlanId")));
     }
 
     @PostMapping("/subscriptions/{id}/downgrade")
@@ -181,7 +189,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> downgradeSubscription(
             @PathVariable Long id,
             @RequestBody Map<String, Long> body) {
-        return ResponseEntity.ok(membershipService.downgradeSubscription(id, body.get("newPlanId")));
+        return ResponseEntity.ok(subscriptionService.downgradeSubscription(id, body.get("newPlanId")));
     }
 
     // ─── Observability ────────────────────────────────────────────────────────
@@ -191,7 +199,7 @@ public class MembershipController {
     public ResponseEntity<Map<String, Object>> getSystemHealth() {
         Map<String, Object> health = new HashMap<>();
         try {
-            List<SubscriptionDTO> all = membershipService.getAllSubscriptions();
+            List<SubscriptionDTO> all = subscriptionService.getAllSubscriptions(Pageable.unpaged()).getContent();
             long activeCount = all.stream()
                     .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
                     .count();
@@ -206,7 +214,7 @@ public class MembershipController {
             health.put("metrics", Map.of(
                 "totalUsers", uniqueUsers,
                 "activeSubscriptions", activeCount,
-                "availablePlans", membershipService.getActivePlans().size(),
+                "availablePlans", planService.getActivePlans().size(),
                 "membershipTiers", membershipService.getAllTiers().size(),
                 "tierDistribution", tierDist
             ));
@@ -225,7 +233,7 @@ public class MembershipController {
     @GetMapping("/analytics")
     @Operation(summary = "Business analytics")
     public ResponseEntity<Map<String, Object>> getAnalytics() {
-        List<SubscriptionDTO> all = membershipService.getAllSubscriptions();
+        List<SubscriptionDTO> all = subscriptionService.getAllSubscriptions(Pageable.unpaged()).getContent();
 
         BigDecimal totalRevenue = all.stream()
                 .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
@@ -252,7 +260,7 @@ public class MembershipController {
         analytics.put("membership", Map.of(
             "tierPopularity", tierPopularity,
             "planTypeDistribution", planTypeDistribution,
-            "totalActivePlans", membershipService.getActivePlans().size()
+            "totalActivePlans", planService.getActivePlans().size()
         ));
         analytics.put("summary", Map.of(
             "totalSubscriptions", all.size(),
