@@ -1,0 +1,73 @@
+# ======================
+#  Java & Maven Projects
+# ======================
+
+# Compiled class files
+*.class
+
+# Maven target directory
+/target/
+
+# Logs
+*.log
+*.out
+
+# Virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*
+
+# ======================
+#  IntelliJ / Eclipse / VS Code
+# ======================
+
+# IDE folders
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# Eclipse-specific
+.project
+.classpath
+.settings/
+bin/
+
+# ======================
+#  OS & Miscellaneous
+# ======================
+
+# macOS metadata
+.DS_Store
+
+# Environment & sensitive config
+.env
+.env.local
+*.key
+*.pem
+*.crt
+
+# Local database files (if ever used)
+*.h2.db
+*.mv.db
+*.sqlite
+
+# Swagger generated files (optional)
+swagger-ui/
+swagger.json
+swagger.yaml
+
+# ======================
+#  Temporary files
+# ======================
+
+# Temporary files from editors
+*~
+*.swp
+*.tmp
+
+# ======================
+#  Dependency cache
+# ======================
+
+# Dependency caches (safe to ignore)
+.mvn/

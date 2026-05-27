@@ -1,0 +1,96 @@
+spring:
+  application:
+    name: FirstClub Membership Program
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:membershipdb}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+  packages-to-scan: com.firstclub.membership.controller
+  show-actuator: false
+
+# ─────────────────────────────────────────────────────────────
+# Externalized membership configuration
+# Change prices, discounts and tier behaviour here — no code change required.
+# ─────────────────────────────────────────────────────────────
+membership:
+  tiers:
+    silver:
+      level: 1
+      description: "Essential benefits for new members"
+      base-price: 299
+      discount-percentage: 5.00
+      free-delivery: false
+      exclusive-deals: false
+      early-access: false
+      priority-support: false
+      max-coupons-per-month: 2
+      delivery-days: 5
+      additional-benefits: "Basic member perks and content access"
+    gold:
+      level: 2
+      description: "Premium benefits with free delivery"
+      base-price: 499
+      discount-percentage: 10.00
+      free-delivery: true
+      exclusive-deals: true
+      early-access: true
+      priority-support: false
+      max-coupons-per-month: 5
+      delivery-days: 3
+      additional-benefits: "Free delivery, exclusive deals, early sale access"
+    platinum:
+      level: 3
+      description: "Ultimate tier with all premium features"
+      base-price: 799
+      discount-percentage: 15.00
+      free-delivery: true
+      exclusive-deals: true
+      early-access: true
+      priority-support: true
+      max-coupons-per-month: 10
+      delivery-days: 1
+      additional-benefits: "All benefits plus priority support and same-day delivery"
+  plan-discounts:
+    quarterly-multiplier: 0.95
+    yearly-multiplier: 0.85

@@ -1,0 +1,11 @@
+spring:
+  jpa:
+    show-sql: true
+
+logging:
+  level:
+    com.firstclub.membership: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.springframework.web: INFO
+    # WARN instead of TRACE — TRACE logs SQL bind parameters including sensitive values
+    org.hibernate.type.descriptor.sql: WARN
