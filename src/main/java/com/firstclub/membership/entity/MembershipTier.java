@@ -3,18 +3,22 @@ package com.firstclub.membership.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 @Entity
 @Table(name = "membership_tiers")
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@ToString(exclude = "plans")
 public class MembershipTier {
 
     @Id
@@ -59,4 +63,17 @@ public class MembershipTier {
     // must not silently drop plans. Plans are created and managed through PlanService.
     @OneToMany(mappedBy = "tier", fetch = FetchType.LAZY)
     private List<MembershipPlan> plans;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MembershipTier)) return false;
+        MembershipTier that = (MembershipTier) o;
+        return id != null && id.equals(that.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
 }

@@ -12,10 +12,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashMap;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -32,6 +34,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     private final SubscriptionRepository subscriptionRepository;
     private final MembershipPlanRepository planRepository;
     private final UserService userService;
+    private final SubscriptionRenewalProcessor renewalProcessor;
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -239,34 +242,44 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void processRenewals() {
+        // NOT_SUPPORTED: entities are loaded without an outer transaction so they become
+        // detached after the query. Each renewSingle call (REQUIRES_NEW) merges and saves
+        // the entity in its own transaction — one failure never rolls back the rest.
         List<Subscription> due = subscriptionRepository.findSubscriptionsForRenewal(LocalDateTime.now().plusDays(1));
         if (due.isEmpty()) return;
 
-        List<Subscription> renewed = due.stream()
-                .filter(sub -> {
-                    try {
-                        // Finding 1: current endDate becomes the new startDate so every renewal
-                        // represents a clean billing period — proration stays correct.
-                        LocalDateTime newStart = sub.getEndDate();
-                        LocalDateTime newEnd = newStart.plusMonths(sub.getPlan().getDurationInMonths());
-                        sub.setStartDate(newStart);
-                        sub.setEndDate(newEnd);
-                        sub.setNextBillingDate(newEnd);
-                        sub.setPaidAmount(sub.getPlan().getPrice()); // new billing period = new payment
-                        return true;
-                    } catch (Exception e) {
-                        log.error("Renewal failed for subscription {}", sub.getId(), e);
-                        return false;
-                    }
-                })
-                .collect(Collectors.toList());
-
-        subscriptionRepository.saveAll(renewed);
-        log.info("Renewed {} subscription(s).", renewed.size());
+        long count = due.stream().filter(renewalProcessor::renewSingle).count();
+        if (count > 0) log.info("Renewed {} subscription(s).", count);
     }
 
     // ─── Aggregates ───────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getAnalyticsStats() {
+        long activeCount = subscriptionRepository.countByStatus(Subscription.SubscriptionStatus.ACTIVE);
+        long totalCount = subscriptionRepository.count();
+        BigDecimal totalRevenue = subscriptionRepository.sumActivePaidAmount();
+        if (totalRevenue == null) totalRevenue = BigDecimal.ZERO;
+        BigDecimal avgRevenue = activeCount == 0 ? BigDecimal.ZERO
+                : totalRevenue.divide(BigDecimal.valueOf(activeCount), 2, RoundingMode.HALF_UP);
+
+        Map<String, Long> tierDist = subscriptionRepository.countActiveGroupedByTier().stream()
+                .collect(Collectors.toMap(r -> (String) r[0], r -> (Long) r[1]));
+        Map<String, Long> planTypeDist = subscriptionRepository.countActiveGroupedByPlanType().stream()
+                .collect(Collectors.toMap(r -> r[0].toString(), r -> (Long) r[1]));
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("totalRevenue", totalRevenue);
+        stats.put("averageRevenuePerUser", avgRevenue);
+        stats.put("activeSubscriptions", activeCount);
+        stats.put("totalSubscriptions", totalCount);
+        stats.put("tierDistribution", tierDist);
+        stats.put("planTypeDistribution", planTypeDist);
+        return stats;
+    }
 
     @Override
     @Transactional(readOnly = true)
@@ -344,7 +357,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                            || to == Subscription.SubscriptionStatus.CANCELLED;
             case SUSPENDED -> to == Subscription.SubscriptionStatus.ACTIVE
                            || to == Subscription.SubscriptionStatus.CANCELLED;
-            case EXPIRED   -> to == Subscription.SubscriptionStatus.ACTIVE;
+            case EXPIRED   -> false; // Reactivation requires renewSubscription — not generic update
             case CANCELLED -> false;
         };
     }

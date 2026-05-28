@@ -1,10 +1,12 @@
 package com.firstclub.membership.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Setter;
+import lombok.ToString;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -12,10 +14,12 @@ import java.util.List;
 
 @Entity
 @Table(name = "membership_plans")
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@ToString(exclude = {"tier", "subscriptions"})
 public class MembershipPlan {
 
     @Id
@@ -51,6 +55,19 @@ public class MembershipPlan {
     private List<Subscription> subscriptions;
 
     public enum PlanType { MONTHLY, QUARTERLY, YEARLY }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MembershipPlan)) return false;
+        MembershipPlan that = (MembershipPlan) o;
+        return id != null && id.equals(that.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
 
     public BigDecimal getMonthlyPrice() {
         return price.divide(new BigDecimal(durationInMonths), 2, RoundingMode.HALF_UP);

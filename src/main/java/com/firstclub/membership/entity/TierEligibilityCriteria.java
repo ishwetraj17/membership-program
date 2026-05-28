@@ -3,8 +3,10 @@ package com.firstclub.membership.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -22,10 +24,12 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "tier_eligibility_criteria")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@ToString(exclude = "tier")
 public class TierEligibilityCriteria {
 
     @Id
@@ -62,4 +66,17 @@ public class TierEligibilityCriteria {
     @UpdateTimestamp
     @Column(nullable = false)
     private LocalDateTime updatedAt;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof TierEligibilityCriteria)) return false;
+        TierEligibilityCriteria that = (TierEligibilityCriteria) o;
+        return id != null && id.equals(that.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
 }

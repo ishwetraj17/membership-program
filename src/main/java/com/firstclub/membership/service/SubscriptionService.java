@@ -29,4 +29,5 @@ public interface SubscriptionService {
 
     // ─── Aggregates (DB-level, O(1) queries) ──────────────────
     Map<String, Object> getActiveStats();
+    Map<String, Object> getAnalyticsStats();
 }

@@ -3,8 +3,10 @@ package com.firstclub.membership.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -14,10 +16,12 @@ import java.time.temporal.ChronoUnit;
 
 @Entity
 @Table(name = "subscriptions")
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@ToString(exclude = {"user", "plan"})
 public class Subscription {
 
     @Id
@@ -76,6 +80,19 @@ public class Subscription {
 
     public enum SubscriptionStatus {
         ACTIVE, EXPIRED, CANCELLED, SUSPENDED, PENDING
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Subscription)) return false;
+        Subscription that = (Subscription) o;
+        return id != null && id.equals(that.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 
     public boolean isActive() {

@@ -2,7 +2,6 @@ package com.firstclub.membership.controller;
 
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
-import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.PlanService;
 import com.firstclub.membership.service.SubscriptionService;
@@ -21,13 +20,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/membership")
@@ -180,16 +176,16 @@ public class MembershipController {
     @Operation(summary = "Upgrade subscription to higher tier")
     public ResponseEntity<SubscriptionDTO> upgradeSubscription(
             @PathVariable Long id,
-            @RequestBody Map<String, Long> body) {
-        return ResponseEntity.ok(subscriptionService.upgradeSubscription(id, body.get("newPlanId")));
+            @Valid @RequestBody UpgradeRequest request) {
+        return ResponseEntity.ok(subscriptionService.upgradeSubscription(id, request.getNewPlanId()));
     }
 
     @PostMapping("/subscriptions/{id}/downgrade")
     @Operation(summary = "Downgrade subscription to lower tier")
     public ResponseEntity<SubscriptionDTO> downgradeSubscription(
             @PathVariable Long id,
-            @RequestBody Map<String, Long> body) {
-        return ResponseEntity.ok(subscriptionService.downgradeSubscription(id, body.get("newPlanId")));
+            @Valid @RequestBody UpgradeRequest request) {
+        return ResponseEntity.ok(subscriptionService.downgradeSubscription(id, request.getNewPlanId()));
     }
 
     // ─── Observability ────────────────────────────────────────────────────────
@@ -225,42 +221,24 @@ public class MembershipController {
     @GetMapping("/analytics")
     @Operation(summary = "Business analytics")
     public ResponseEntity<Map<String, Object>> getAnalytics() {
-        List<SubscriptionDTO> all = subscriptionService.getAllSubscriptions(Pageable.unpaged()).getContent();
-
-        BigDecimal totalRevenue = all.stream()
-                .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
-                .map(SubscriptionDTO::getPaidAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        Map<String, Long> tierPopularity = all.stream()
-                .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
-                .collect(Collectors.groupingBy(SubscriptionDTO::getTier, Collectors.counting()));
-
-        Map<String, Long> planTypeDistribution = all.stream()
-                .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
-                .collect(Collectors.groupingBy(SubscriptionDTO::getPlanType, Collectors.counting()));
-
-        long activeCount = tierPopularity.values().stream().mapToLong(Long::longValue).sum();
+        Map<String, Object> stats = subscriptionService.getAnalyticsStats();
 
         Map<String, Object> analytics = new HashMap<>();
         analytics.put("revenue", Map.of(
-            "totalRevenue", totalRevenue,
+            "totalRevenue", stats.get("totalRevenue"),
             "currency", "INR",
-            // Finding 5: divide active revenue by active subscriber count, not total subscription count
-            "averageRevenuePerUser", activeCount == 0 ? BigDecimal.ZERO :
-                    totalRevenue.divide(BigDecimal.valueOf(activeCount), 2, RoundingMode.HALF_UP)
+            "averageRevenuePerUser", stats.get("averageRevenuePerUser")
         ));
         analytics.put("membership", Map.of(
-            "tierPopularity", tierPopularity,
-            "planTypeDistribution", planTypeDistribution,
+            "tierPopularity", stats.get("tierDistribution"),
+            "planTypeDistribution", stats.get("planTypeDistribution"),
             "totalActivePlans", planService.getActivePlans().size()
         ));
         analytics.put("summary", Map.of(
-            "totalSubscriptions", all.size(),
-            "activeSubscriptions", activeCount,
+            "totalSubscriptions", stats.get("totalSubscriptions"),
+            "activeSubscriptions", stats.get("activeSubscriptions"),
             "generatedAt", LocalDateTime.now()
         ));
-
         return ResponseEntity.ok(analytics);
     }
 }

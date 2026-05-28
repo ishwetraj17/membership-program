@@ -6,6 +6,8 @@ import com.firstclub.membership.entity.*;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
+import com.firstclub.membership.dto.SubscriptionUpdateDTO;
+import com.firstclub.membership.service.impl.SubscriptionRenewalProcessor;
 import com.firstclub.membership.service.impl.SubscriptionServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +34,7 @@ class SubscriptionServiceTest {
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private MembershipPlanRepository planRepository;
     @Mock private UserService userService;
+    @Mock private SubscriptionRenewalProcessor renewalProcessor;
 
     @InjectMocks private SubscriptionServiceImpl subscriptionService;
 
@@ -371,37 +374,94 @@ class SubscriptionServiceTest {
     @Nested @DisplayName("processRenewals")
     class ProcessRenewals {
 
-        @Test @DisplayName("auto-renewal advances startDate to previous endDate and resets paidAmount")
-        void renewalAdvancesBillingPeriod() {
-            LocalDateTime periodStart = LocalDateTime.now().minusMonths(1);
-            LocalDateTime periodEnd = LocalDateTime.now().plusHours(12);
-
-            Subscription due = Subscription.builder()
-                    .id(300L)
-                    .user(testUser)
-                    .plan(silverMonthly)
-                    .status(Subscription.SubscriptionStatus.ACTIVE)
-                    .startDate(periodStart)
-                    .endDate(periodEnd)
-                    .nextBillingDate(periodEnd)
-                    .paidAmount(new BigDecimal("150.00")) // differs from plan price intentionally
-                    .autoRenewal(true)
-                    .version(0L)
-                    .build();
-
+        @Test @DisplayName("delegates each due subscription to the renewal processor")
+        void renewalDelegatesToProcessor() {
+            Subscription due = buildActiveSubscription();
             when(subscriptionRepository.findSubscriptionsForRenewal(any())).thenReturn(List.of(due));
-            when(subscriptionRepository.saveAll(anyList())).thenReturn(List.of(due));
+            when(renewalProcessor.renewSingle(due)).thenReturn(true);
 
             subscriptionService.processRenewals();
 
-            // startDate advances to the previous period's end (Fix 1 regression guard)
-            assertThat(due.getStartDate()).isEqualTo(periodEnd);
-            // endDate extends by plan duration from the new startDate
-            assertThat(due.getEndDate()).isEqualTo(periodEnd.plusMonths(1));
-            // nextBillingDate always equals endDate
-            assertThat(due.getNextBillingDate()).isEqualTo(due.getEndDate());
-            // paidAmount resets to plan price (Fix 4 regression guard)
-            assertThat(due.getPaidAmount()).isEqualByComparingTo(silverMonthly.getPrice());
+            verify(renewalProcessor).renewSingle(due);
+        }
+
+        // Test 4 — renewal batch isolation
+        @Test @DisplayName("one failed renewal does not abort other renewals in the batch")
+        void renewalBatchIsolation() {
+            Subscription sub1 = buildActiveSubscription();
+            Subscription sub2 = Subscription.builder()
+                    .id(200L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusMonths(1))
+                    .endDate(LocalDateTime.now().plusHours(12))
+                    .nextBillingDate(LocalDateTime.now().plusHours(12))
+                    .paidAmount(new BigDecimal("299.00")).autoRenewal(true).version(0L).build();
+
+            when(subscriptionRepository.findSubscriptionsForRenewal(any())).thenReturn(List.of(sub1, sub2));
+            when(renewalProcessor.renewSingle(sub1)).thenReturn(false); // sub1 fails
+            when(renewalProcessor.renewSingle(sub2)).thenReturn(true);  // sub2 succeeds
+
+            subscriptionService.processRenewals();
+
+            // Both subscriptions must be attempted regardless of sub1's failure
+            verify(renewalProcessor).renewSingle(sub1);
+            verify(renewalProcessor).renewSingle(sub2);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // updateSubscription
+    // ═══════════════════════════════════════════════════════════
+
+    @Nested @DisplayName("updateSubscription")
+    class UpdateSubscription {
+
+        // Test 3 — EXPIRED->ACTIVE rejection
+        @Test @DisplayName("EXPIRED->ACTIVE via updateSubscription is rejected — must use renewSubscription")
+        void expiredToActiveRejected() {
+            Subscription expired = buildActiveSubscription();
+            expired.setStatus(Subscription.SubscriptionStatus.EXPIRED);
+            when(subscriptionRepository.findById(expired.getId())).thenReturn(Optional.of(expired));
+
+            SubscriptionUpdateDTO update = new SubscriptionUpdateDTO();
+            update.setStatus(Subscription.SubscriptionStatus.ACTIVE);
+
+            assertThatThrownBy(() -> subscriptionService.updateSubscription(expired.getId(), update))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("EXPIRED");
+
+            verify(subscriptionRepository, never()).save(any());
+        }
+    }
+
+    // ─── SubscriptionRenewalProcessor (field-mutation correctness) ─────────────
+
+    @Nested @DisplayName("SubscriptionRenewalProcessor")
+    class RenewalProcessorTests {
+
+        @Mock private SubscriptionRepository processorRepo;
+        @InjectMocks private SubscriptionRenewalProcessor processor;
+
+        @Test @DisplayName("renewSingle advances billing period and resets paidAmount")
+        void renewSingleCorrectly() {
+            LocalDateTime periodEnd = LocalDateTime.now().plusHours(12);
+            Subscription sub = Subscription.builder()
+                    .id(400L).user(testUser).plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(LocalDateTime.now().minusMonths(1)).endDate(periodEnd)
+                    .nextBillingDate(periodEnd).paidAmount(new BigDecimal("150.00"))
+                    .autoRenewal(true).version(0L).build();
+
+            when(processorRepo.save(sub)).thenReturn(sub);
+
+            boolean result = processor.renewSingle(sub);
+
+            assertThat(result).isTrue();
+            assertThat(sub.getStartDate()).isEqualTo(periodEnd);
+            assertThat(sub.getEndDate()).isEqualTo(periodEnd.plusMonths(1));
+            assertThat(sub.getNextBillingDate()).isEqualTo(sub.getEndDate());
+            assertThat(sub.getPaidAmount()).isEqualByComparingTo(silverMonthly.getPrice());
+            verify(processorRepo).save(sub);
         }
     }
 

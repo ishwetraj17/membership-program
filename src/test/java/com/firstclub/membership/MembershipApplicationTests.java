@@ -470,5 +470,41 @@ class MembershipApplicationTests {
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(resp.getBody().getStatus()).isEqualTo(Subscription.SubscriptionStatus.CANCELLED);
         }
+
+        // Test 1 — missing newPlanId
+        @Test @DisplayName("PUT /subscriptions/{id}/upgrade with missing newPlanId — 400")
+        void upgradeWithMissingPlanId() {
+            UserDTO user = userService.createUser(testUser("Upgrade NPE User", "upgradenpe"));
+            MembershipPlanDTO plan = planService.getActivePlans().stream()
+                    .filter(p -> "SILVER".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+                    .findFirst().orElseThrow();
+            SubscriptionDTO sub = subscriptionService.createSubscription(
+                    SubscriptionRequestDTO.builder().userId(user.getId()).planId(plan.getId()).autoRenewal(true).build());
+
+            // Send body without the required newPlanId field — expect 400 not 500
+            ResponseEntity<String> resp = restTemplate.exchange(
+                    baseUrl() + "/api/v1/membership/subscriptions/" + sub.getId() + "/upgrade",
+                    HttpMethod.PUT, jsonRequest(Map.of()), String.class);
+            assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+
+        // Test 2 — invalid status enum
+        @Test @DisplayName("PATCH /users/{id} with invalid status value — 400 not 500")
+        void patchInvalidStatus() {
+            UserDTO user = userService.createUser(testUser("Patch Status User", "patchstatus"));
+            ResponseEntity<String> resp = restTemplate.exchange(
+                    baseUrl() + "/api/v1/users/" + user.getId(),
+                    HttpMethod.PATCH, jsonRequest(Map.of("status", "BANNED")), String.class);
+            assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+
+        // Test 5 — analytics aggregate path
+        @Test @DisplayName("GET /analytics — returns expected structure via DB aggregates")
+        void analyticsAggregatePath() {
+            ResponseEntity<Map> resp = restTemplate.getForEntity(
+                    baseUrl() + "/api/v1/membership/analytics", Map.class);
+            assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(resp.getBody()).containsKeys("revenue", "membership", "summary");
+        }
     }
 }

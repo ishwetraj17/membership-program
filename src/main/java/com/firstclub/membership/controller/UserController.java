@@ -92,7 +92,14 @@ public class UserController {
         if (updates.containsKey("state"))       current.setState((String) updates.get("state"));
         if (updates.containsKey("pincode"))     current.setPincode((String) updates.get("pincode"));
         if (updates.containsKey("status")) {
-            current.setStatus(User.UserStatus.valueOf((String) updates.get("status")));
+            String statusValue = (String) updates.get("status");
+            try {
+                current.setStatus(User.UserStatus.valueOf(statusValue));
+            } catch (IllegalArgumentException e) {
+                throw new MembershipException(
+                    "Invalid status '" + statusValue + "'. Valid values: ACTIVE, INACTIVE, SUSPENDED",
+                    "INVALID_STATUS_VALUE");
+            }
         }
 
         return ResponseEntity.ok(userService.updateUser(id, current));
@@ -157,9 +164,9 @@ public class UserController {
     public ResponseEntity<SubscriptionDTO> upgradeSubscription(
             @PathVariable Long userId,
             @PathVariable Long subscriptionId,
-            @RequestBody Map<String, Long> body) {
+            @Valid @RequestBody UpgradeRequest request) {
         requireUserOwnsSubscription(userId, subscriptionId);
-        return ResponseEntity.ok(subscriptionService.upgradeSubscription(subscriptionId, body.get("newPlanId")));
+        return ResponseEntity.ok(subscriptionService.upgradeSubscription(subscriptionId, request.getNewPlanId()));
     }
 
     @PostMapping("/{userId}/subscriptions/{subscriptionId}/cancel")
