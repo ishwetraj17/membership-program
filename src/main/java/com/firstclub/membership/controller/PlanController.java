@@ -84,7 +84,14 @@ public class PlanController {
     public ResponseEntity<List<MembershipPlanDTO>> comparePlans(
             @Parameter(description = "Comma-separated plan IDs", example = "1,4,7") @RequestParam String planIds) {
         List<MembershipPlanDTO> plans = java.util.Arrays.stream(planIds.split(","))
-            .map(s -> Long.valueOf(s.trim()))
+            .map(s -> {
+                try { return Long.valueOf(s.trim()); }
+                catch (NumberFormatException e) {
+                    throw new MembershipException(
+                        "Invalid plan ID '" + s.trim() + "' — must be a positive integer",
+                        "INVALID_PARAMETER_VALUE");
+                }
+            })
             .map(planService::getPlanById)
             .filter(java.util.Optional::isPresent)
             .map(java.util.Optional::get)
