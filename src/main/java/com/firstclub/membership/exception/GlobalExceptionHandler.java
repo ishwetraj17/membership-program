@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -104,6 +105,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnreadableMessage(HttpMessageNotReadableException e) {
         return ResponseEntity.badRequest()
                 .body(error("Malformed or unreadable request body", "MALFORMED_REQUEST", 400, null));
+    }
+
+    /**
+     * Catches unsupported Content-Type headers (e.g. text/plain on a JSON endpoint).
+     * Without this handler the catch-all returns 500; this returns the correct 415.
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException e) {
+        String message = String.format("Content-Type '%s' is not supported. Use 'application/json'",
+                e.getContentType());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(error(message, "UNSUPPORTED_MEDIA_TYPE", 415, null));
     }
 
     /**

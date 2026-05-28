@@ -97,14 +97,14 @@ public class UserController {
         UserDTO current = userService.getUserById(id)
                 .orElseThrow(() -> MembershipException.userNotFound(id));
 
-        if (updates.containsKey("name"))        current.setName((String) updates.get("name"));
-        if (updates.containsKey("phoneNumber")) current.setPhoneNumber((String) updates.get("phoneNumber"));
-        if (updates.containsKey("address"))     current.setAddress((String) updates.get("address"));
-        if (updates.containsKey("city"))        current.setCity((String) updates.get("city"));
-        if (updates.containsKey("state"))       current.setState((String) updates.get("state"));
-        if (updates.containsKey("pincode"))     current.setPincode((String) updates.get("pincode"));
+        if (updates.containsKey("name"))        current.setName(asString(updates, "name"));
+        if (updates.containsKey("phoneNumber")) current.setPhoneNumber(asString(updates, "phoneNumber"));
+        if (updates.containsKey("address"))     current.setAddress(asString(updates, "address"));
+        if (updates.containsKey("city"))        current.setCity(asString(updates, "city"));
+        if (updates.containsKey("state"))       current.setState(asString(updates, "state"));
+        if (updates.containsKey("pincode"))     current.setPincode(asString(updates, "pincode"));
         if (updates.containsKey("status")) {
-            String statusValue = (String) updates.get("status");
+            String statusValue = asString(updates, "status");
             try {
                 current.setStatus(User.UserStatus.valueOf(statusValue));
             } catch (IllegalArgumentException e) {
@@ -228,5 +228,16 @@ public class UserController {
         if (!subscriptionService.subscriptionBelongsToUser(subscriptionId, userId)) {
             throw MembershipException.subscriptionNotOwnedByUser(subscriptionId, userId);
         }
+    }
+
+    /** Extracts a String value from the PATCH map; returns 400 if the value is not a String. */
+    private String asString(Map<String, Object> updates, String field) {
+        Object value = updates.get(field);
+        if (value != null && !(value instanceof String)) {
+            throw new MembershipException(
+                    "Field '" + field + "' must be a string, got: " + value.getClass().getSimpleName(),
+                    "INVALID_FIELD_TYPE");
+        }
+        return (String) value;
     }
 }
