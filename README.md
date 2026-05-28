@@ -268,7 +268,7 @@ The `prod` profile:
 | Decision | Rationale |
 |---|---|
 | No authentication | Out of scope; `requireUserOwnsSubscription()` demonstrates ownership-awareness |
-| Tier eligibility stub | Order data is external; the interface isolates the integration point for easy replacement |
+| Tier eligibility stubs | Both order metrics and cohort membership use deterministic stubs (`fetchOrderSummary`, `isUserInCohort`). The `TierEvaluationService` interface isolates both integration points for easy replacement with real data sources. |
 | No payment gateway | Amounts tracked in `paid_amount`; pro-rating logic implemented without a real payment call |
 | Caffeine over Redis | Single-instance caching fits this scale; Redis adds operational complexity without benefit here |
 | Monolith, not microservices | A membership domain at startup scale doesn't justify service decomposition overhead |

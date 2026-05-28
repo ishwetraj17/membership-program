@@ -246,8 +246,9 @@ public class MembershipController {
         analytics.put("revenue", Map.of(
             "totalRevenue", totalRevenue,
             "currency", "INR",
-            "averageRevenuePerUser", all.isEmpty() ? 0 :
-                    totalRevenue.divide(BigDecimal.valueOf(all.size()), 2, RoundingMode.HALF_UP)
+            // Finding 5: divide active revenue by active subscriber count, not total subscription count
+            "averageRevenuePerUser", activeCount == 0 ? BigDecimal.ZERO :
+                    totalRevenue.divide(BigDecimal.valueOf(activeCount), 2, RoundingMode.HALF_UP)
         ));
         analytics.put("membership", Map.of(
             "tierPopularity", tierPopularity,

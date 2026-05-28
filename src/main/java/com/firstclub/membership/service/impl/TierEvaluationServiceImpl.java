@@ -2,6 +2,8 @@ package com.firstclub.membership.service.impl;
 
 import com.firstclub.membership.dto.TierEligibilityResult;
 import com.firstclub.membership.entity.TierEligibilityCriteria;
+import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.repository.MembershipTierRepository;
 import com.firstclub.membership.repository.TierEligibilityCriteriaRepository;
 import com.firstclub.membership.service.TierEvaluationService;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ import java.util.Optional;
 public class TierEvaluationServiceImpl implements TierEvaluationService {
 
     private final TierEligibilityCriteriaRepository criteriaRepository;
+    private final MembershipTierRepository tierRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -52,9 +55,14 @@ public class TierEvaluationServiceImpl implements TierEvaluationService {
     @Override
     @Transactional(readOnly = true)
     public boolean isEligibleForTier(Long userId, String tierName) {
-        Optional<TierEligibilityCriteria> criteria = criteriaRepository.findByTier_Name(tierName.toUpperCase());
+        String upper = tierName.toUpperCase();
+        // Finding 2: distinguish "tier exists, no criteria" (SILVER) from "tier doesn't exist"
+        if (tierRepository.findByName(upper).isEmpty()) {
+            throw MembershipException.tierNotFound(tierName);
+        }
+        Optional<TierEligibilityCriteria> criteria = criteriaRepository.findByTier_Name(upper);
         if (criteria.isEmpty()) {
-            return true; // SILVER — no minimum requirements
+            return true; // Tier exists but has no criteria (SILVER) — open to all
         }
         return meetsEligibility(userId, fetchOrderSummary(userId), criteria.get());
     }

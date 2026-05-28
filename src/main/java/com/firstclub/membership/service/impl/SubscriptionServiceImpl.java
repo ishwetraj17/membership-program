@@ -223,7 +223,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     @Override
     @Transactional(readOnly = true)
     public Page<SubscriptionDTO> getAllSubscriptions(Pageable pageable) {
-        return subscriptionRepository.findAll(pageable).map(this::convertToDTO);
+        return subscriptionRepository.findAllWithAssociations(pageable).map(this::convertToDTO);
     }
 
     // ─── Background jobs ──────────────────────────────────────────────────────
@@ -242,7 +242,11 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         List<Subscription> renewed = due.stream()
                 .filter(sub -> {
                     try {
-                        LocalDateTime newEnd = sub.getEndDate().plusMonths(sub.getPlan().getDurationInMonths());
+                        // Finding 1: current endDate becomes the new startDate so every renewal
+                        // represents a clean billing period — proration stays correct.
+                        LocalDateTime newStart = sub.getEndDate();
+                        LocalDateTime newEnd = newStart.plusMonths(sub.getPlan().getDurationInMonths());
+                        sub.setStartDate(newStart);
                         sub.setEndDate(newEnd);
                         sub.setNextBillingDate(newEnd);
                         sub.setPaidAmount(sub.getPlan().getPrice()); // new billing period = new payment
@@ -263,7 +267,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     @Override
     @Transactional(readOnly = true)
     public Map<String, Object> getActiveStats() {
-        long activeCount = subscriptionRepository.countActiveSubscriptions();
+        long activeCount = subscriptionRepository.countByStatus(Subscription.SubscriptionStatus.ACTIVE);
         long userCount = subscriptionRepository.countUsersWithActiveSubscriptions();
         Map<String, Long> tierDist = subscriptionRepository.countActiveGroupedByTier().stream()
                 .collect(Collectors.toMap(r -> (String) r[0], r -> (Long) r[1]));
