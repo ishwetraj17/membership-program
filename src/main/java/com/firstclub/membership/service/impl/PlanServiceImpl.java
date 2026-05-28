@@ -53,7 +53,19 @@ public class PlanServiceImpl implements PlanService {
 
     @Override
     public List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type) {
-        return convertPlans(planRepository.findByTypeAndIsActiveTrue(type));
+        List<MembershipPlan> filtered = planRepository.findByTypeAndIsActiveTrue(type);
+        // Savings are computed relative to the monthly baseline for each tier.
+        // When the result set contains no MONTHLY plans (e.g. type=YEARLY), fetch
+        // monthly plans separately so the price map is populated correctly.
+        Map<Long, BigDecimal> monthlyPriceByTierId = buildMonthlyPriceMap(filtered);
+        if (monthlyPriceByTierId.isEmpty() && type != MembershipPlan.PlanType.MONTHLY) {
+            monthlyPriceByTierId = buildMonthlyPriceMap(
+                    planRepository.findByTypeAndIsActiveTrue(MembershipPlan.PlanType.MONTHLY));
+        }
+        final Map<Long, BigDecimal> priceMap = monthlyPriceByTierId;
+        return filtered.stream()
+                .map(p -> convertPlanToDTO(p, priceMap))
+                .collect(Collectors.toList());
     }
 
     @Override
