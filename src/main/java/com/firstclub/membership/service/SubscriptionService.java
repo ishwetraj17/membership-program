@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public interface SubscriptionService {
@@ -25,4 +26,7 @@ public interface SubscriptionService {
     // ─── Background jobs ──────────────────────────────────────
     void processExpiredSubscriptions();
     void processRenewals();
+
+    // ─── Aggregates (DB-level, O(1) queries) ──────────────────
+    Map<String, Object> getActiveStats();
 }

@@ -157,7 +157,7 @@ One active subscription per user is enforced at the database level.
 Preventing duplicate active subscriptions under concurrent requests:
 
 1. **Application guard** — `findActiveSubscriptionByUser()` before `save()` catches the common case fast.
-2. **Optimistic locking** — `@Version Long version` on `Subscription` increments on every UPDATE. Concurrent modifications from two transactions fail with `OptimisticLockException` → 409.
+2. **Optimistic locking** — `@Version Long version` on `Subscription` increments on every UPDATE. Spring Data JPA translates Hibernate's `StaleObjectStateException` → `JpaOptimisticLockingFailureException`; the handler catches both the Spring exception (`OptimisticLockingFailureException`) and the JPA spec exception (`jakarta.persistence.OptimisticLockException`) → 409.
 3. **Database constraint** — a PostgreSQL partial unique index:
    ```sql
    CREATE UNIQUE INDEX uq_user_active_subscription
@@ -241,8 +241,8 @@ mvn test
 
 Tests run against H2 in-memory — no PostgreSQL required. Flyway is disabled; Hibernate creates the schema from entity metadata.
 
-**34 tests:**
-- 27 integration tests (`@SpringBootTest` + `TestRestTemplate`) covering context load, business rules, REST endpoints, exception handling, and tier eligibility
+**36 tests:**
+- 29 integration tests (`@SpringBootTest` + `TestRestTemplate`) covering context load, business rules, REST endpoints, exception handling, and tier eligibility (including cohort evaluation consistency)
 - 7 Mockito unit tests for `SubscriptionService` — create/cancel/upgrade paths with mocked repositories
 
 ---

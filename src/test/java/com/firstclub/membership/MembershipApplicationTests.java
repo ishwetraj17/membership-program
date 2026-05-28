@@ -299,6 +299,21 @@ class MembershipApplicationTests {
             assertThat(result.getOrderCount()).isGreaterThanOrEqualTo(0);
             assertThat(result.getMonthlySpend()).isGreaterThanOrEqualTo(BigDecimal.ZERO);
         }
+
+        @Test @DisplayName("isEligibleForTier is consistent with evaluateEligibleTier")
+        void eligibilityConsistency() {
+            UserDTO user = userService.createUser(testUser("Consistency User", "consist"));
+            TierEligibilityResult result = tierEvaluationService.evaluateEligibleTier(user.getId());
+            // The computed eligible tier must pass the point check too
+            assertThat(tierEvaluationService.isEligibleForTier(user.getId(), result.getEligibleTierName())).isTrue();
+        }
+
+        @Test @DisplayName("Evaluation note describes the criteria applied")
+        void evaluationNoteIsInformative() {
+            UserDTO user = userService.createUser(testUser("Note User", "note"));
+            TierEligibilityResult result = tierEvaluationService.evaluateEligibleTier(user.getId());
+            assertThat(result.getEvaluationNote()).isNotBlank();
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════════════

@@ -45,7 +45,9 @@ public class MembershipPlan {
     @JoinColumn(name = "tier_id", nullable = false)
     private MembershipTier tier;
 
-    @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    // No cascade: subscriptions are core business records with their own lifecycle.
+    // A plan deletion (if implemented) must never silently delete subscription history.
+    @OneToMany(mappedBy = "plan", fetch = FetchType.LAZY)
     private List<Subscription> subscriptions;
 
     public enum PlanType { MONTHLY, QUARTERLY, YEARLY }

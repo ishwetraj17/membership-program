@@ -27,9 +27,12 @@ public class TierEvaluationServiceImpl implements TierEvaluationService {
         List<TierEligibilityCriteria> allCriteria = criteriaRepository.findAllOrderByTierLevelDesc();
 
         String eligibleTier = "SILVER"; // default — no criteria means always eligible
+        String note = "Default tier — no minimum requirements";
+
         for (TierEligibilityCriteria criteria : allCriteria) {
-            if (meetsEligibility(orders, criteria)) {
+            if (meetsEligibility(userId, orders, criteria)) {
                 eligibleTier = criteria.getTier().getName();
+                note = buildEvaluationNote(orders, criteria);
                 break;
             }
         }
@@ -42,7 +45,7 @@ public class TierEvaluationServiceImpl implements TierEvaluationService {
                 .eligibleTierName(eligibleTier)
                 .orderCount(orders.orderCount)
                 .monthlySpend(orders.monthlySpend)
-                .evaluationNote("Based on last 30 days of order activity")
+                .evaluationNote(note)
                 .build();
     }
 
@@ -53,12 +56,23 @@ public class TierEvaluationServiceImpl implements TierEvaluationService {
         if (criteria.isEmpty()) {
             return true; // SILVER — no minimum requirements
         }
-        return meetsEligibility(fetchOrderSummary(userId), criteria.get());
+        return meetsEligibility(userId, fetchOrderSummary(userId), criteria.get());
     }
 
-    private boolean meetsEligibility(UserOrderSummary summary, TierEligibilityCriteria criteria) {
-        return summary.orderCount >= criteria.getMinOrders()
-                && summary.monthlySpend.compareTo(criteria.getMinMonthlySpend()) >= 0;
+    private boolean meetsEligibility(Long userId, UserOrderSummary summary, TierEligibilityCriteria criteria) {
+        if (summary.orderCount < criteria.getMinOrders()) return false;
+        if (summary.monthlySpend.compareTo(criteria.getMinMonthlySpend()) < 0) return false;
+        // Cohort gate: if the tier requires a specific cohort, the user must belong to it
+        if (criteria.getCohortCode() != null && !isUserInCohort(userId, criteria.getCohortCode())) return false;
+        return true;
+    }
+
+    private String buildEvaluationNote(UserOrderSummary orders, TierEligibilityCriteria criteria) {
+        String base = String.format("Last %d days: %d orders, ₹%.0f spend",
+                criteria.getEvaluationPeriodDays(), orders.orderCount, orders.monthlySpend);
+        return criteria.getCohortCode() != null
+                ? base + " + " + criteria.getCohortCode() + " cohort membership"
+                : base;
     }
 
     /**
@@ -73,6 +87,20 @@ public class TierEvaluationServiceImpl implements TierEvaluationService {
         int orderCount = (int) (userId % 20) * 2;
         BigDecimal monthlySpend = BigDecimal.valueOf(userId * 500L).min(BigDecimal.valueOf(10_000));
         return new UserOrderSummary(orderCount, monthlySpend);
+    }
+
+    /**
+     * DEMO STUB — returns deterministic cohort assignment based on userId.
+     *
+     * In production this would query a cohort assignment table or call a
+     * UserProfile service. The even/odd split provides observable, testable
+     * differentiation without any external dependency.
+     */
+    private boolean isUserInCohort(Long userId, String cohortCode) {
+        return switch (cohortCode) {
+            case "PREMIUM_COHORT" -> userId % 2 == 0;
+            default -> false;
+        };
     }
 
     private record UserOrderSummary(int orderCount, BigDecimal monthlySpend) {}

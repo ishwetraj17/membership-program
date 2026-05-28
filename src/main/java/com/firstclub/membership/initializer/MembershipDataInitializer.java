@@ -44,6 +44,11 @@ public class MembershipDataInitializer implements ApplicationRunner {
         "PLATINUM", new int[]{15, 5_000}
     );
 
+    // PLATINUM additionally requires cohort membership (invite-only tier).
+    private static final Map<String, String> COHORT_CODES = Map.of(
+        "PLATINUM", "PREMIUM_COHORT"
+    );
+
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
@@ -125,6 +130,7 @@ public class MembershipDataInitializer implements ApplicationRunner {
                 .tier(tier)
                 .minOrders(thresholds[0])
                 .minMonthlySpend(new BigDecimal(thresholds[1]))
+                .cohortCode(COHORT_CODES.get(tier.getName()))
                 .evaluationPeriodDays(30)
                 .build();
 

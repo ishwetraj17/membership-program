@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -56,12 +57,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Catches optimistic-lock conflicts — two concurrent requests updated the
-     * same subscription row simultaneously. The client should retry.
+     * Catches optimistic-lock conflicts — two concurrent requests updated the same
+     * subscription row simultaneously. The client should retry.
+     *
+     * Two handlers cover both exception paths:
+     *  - Spring Data JPA translates Hibernate's StaleObjectStateException →
+     *    JpaOptimisticLockingFailureException (extends OptimisticLockingFailureException).
+     *  - Direct JPA EntityManager usage throws jakarta.persistence.OptimisticLockException.
      */
-    @ExceptionHandler(OptimisticLockException.class)
-    public ResponseEntity<ErrorResponse> handleOptimisticLock(OptimisticLockException e) {
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> handleSpringOptimisticLock(OptimisticLockingFailureException e) {
         log.warn("Optimistic lock conflict: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(error("Concurrent modification detected — please retry", "CONCURRENT_MODIFICATION", 409, null));
+    }
+
+    @ExceptionHandler(OptimisticLockException.class)
+    public ResponseEntity<ErrorResponse> handleJpaOptimisticLock(OptimisticLockException e) {
+        log.warn("Optimistic lock conflict (JPA): {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(error("Concurrent modification detected — please retry", "CONCURRENT_MODIFICATION", 409, null));
     }

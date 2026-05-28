@@ -48,6 +48,8 @@ public class User {
     @Column(nullable = false)
     private UserStatus status;
 
+    // CascadeType.ALL is intentional: deleting a user cleans up their full subscription history.
+    // The service layer prevents deletion while an ACTIVE subscription exists.
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<Subscription> subscriptions;
 

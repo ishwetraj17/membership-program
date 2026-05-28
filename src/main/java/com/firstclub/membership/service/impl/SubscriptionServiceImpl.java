@@ -19,6 +19,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -148,6 +149,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         subscription.setStartDate(now);
         subscription.setEndDate(newEnd);
         subscription.setNextBillingDate(newEnd);
+        subscription.setPaidAmount(subscription.getPlan().getPrice()); // new billing period = new payment
 
         return convertToDTO(subscriptionRepository.save(subscription));
     }
@@ -243,6 +245,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                         LocalDateTime newEnd = sub.getEndDate().plusMonths(sub.getPlan().getDurationInMonths());
                         sub.setEndDate(newEnd);
                         sub.setNextBillingDate(newEnd);
+                        sub.setPaidAmount(sub.getPlan().getPrice()); // new billing period = new payment
                         return true;
                     } catch (Exception e) {
                         log.error("Renewal failed for subscription {}", sub.getId(), e);
@@ -253,6 +256,18 @@ public class SubscriptionServiceImpl implements SubscriptionService {
 
         subscriptionRepository.saveAll(renewed);
         log.info("Renewed {} subscription(s).", renewed.size());
+    }
+
+    // ─── Aggregates ───────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getActiveStats() {
+        long activeCount = subscriptionRepository.countActiveSubscriptions();
+        long userCount = subscriptionRepository.countUsersWithActiveSubscriptions();
+        Map<String, Long> tierDist = subscriptionRepository.countActiveGroupedByTier().stream()
+                .collect(Collectors.toMap(r -> (String) r[0], r -> (Long) r[1]));
+        return Map.of("activeSubscriptions", activeCount, "uniqueUsers", userCount, "tierDistribution", tierDist);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

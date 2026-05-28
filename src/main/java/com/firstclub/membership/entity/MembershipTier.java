@@ -55,6 +55,8 @@ public class MembershipTier {
     @Column(columnDefinition = "TEXT")
     private String additionalBenefits;
 
-    @OneToMany(mappedBy = "tier", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    // No cascade: plans have an independent lifecycle; tier deletion (if ever implemented)
+    // must not silently drop plans. Plans are created and managed through PlanService.
+    @OneToMany(mappedBy = "tier", fetch = FetchType.LAZY)
     private List<MembershipPlan> plans;
 }

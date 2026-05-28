@@ -199,24 +199,16 @@ public class MembershipController {
     public ResponseEntity<Map<String, Object>> getSystemHealth() {
         Map<String, Object> health = new HashMap<>();
         try {
-            List<SubscriptionDTO> all = subscriptionService.getAllSubscriptions(Pageable.unpaged()).getContent();
-            long activeCount = all.stream()
-                    .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
-                    .count();
-            long uniqueUsers = all.stream().map(SubscriptionDTO::getUserId).distinct().count();
-
-            Map<String, Long> tierDist = all.stream()
-                    .filter(s -> s.getStatus() == Subscription.SubscriptionStatus.ACTIVE)
-                    .collect(Collectors.groupingBy(SubscriptionDTO::getTier, Collectors.counting()));
+            Map<String, Object> stats = subscriptionService.getActiveStats();
 
             health.put("status", "UP");
             health.put("timestamp", LocalDateTime.now());
             health.put("metrics", Map.of(
-                "totalUsers", uniqueUsers,
-                "activeSubscriptions", activeCount,
+                "totalUsers", stats.get("uniqueUsers"),
+                "activeSubscriptions", stats.get("activeSubscriptions"),
                 "availablePlans", planService.getActivePlans().size(),
                 "membershipTiers", membershipService.getAllTiers().size(),
-                "tierDistribution", tierDist
+                "tierDistribution", stats.get("tierDistribution")
             ));
             health.put("system", Map.of(
                 "javaVersion", System.getProperty("java.version"),
