@@ -220,6 +220,7 @@ Plan and tier lists — stable reference data read on every request — are cach
 | POST | `/api/v1/membership/subscriptions` | Create subscription |
 | PUT | `/api/v1/membership/subscriptions/{id}/cancel` | Cancel subscription |
 | PUT | `/api/v1/membership/subscriptions/{id}/upgrade` | Upgrade to higher tier/duration |
+| POST | `/api/v1/membership/subscriptions/{id}/downgrade` | Downgrade subscription to lower tier |
 | POST | `/api/v1/membership/subscriptions/{id}/renew` | Renew expired subscription |
 | GET | `/api/v1/membership/subscriptions?page=0&size=20` | Paginated subscription list |
 | GET | `/api/v1/users/{id}/tier-eligibility` | Tier eligibility evaluation |

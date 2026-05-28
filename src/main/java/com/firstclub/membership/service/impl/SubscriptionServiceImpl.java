@@ -175,8 +175,12 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             throw MembershipException.invalidPlanTransition(currentPlan.getName(), newPlan.getName());
         }
 
+        // Pro-ration is based on the current period — compute it before the period is extended.
+        BigDecimal proRated = calculateProRated(subscription, currentPlan, newPlan);
         subscription.setPlan(newPlan);
-        subscription.setPaidAmount(subscription.getPaidAmount().add(calculateProRated(subscription, currentPlan, newPlan)));
+        subscription.setEndDate(subscription.getStartDate().plusMonths(newPlan.getDurationInMonths()));
+        subscription.setNextBillingDate(subscription.getEndDate());
+        subscription.setPaidAmount(subscription.getPaidAmount().add(proRated));
 
         return convertToDTO(subscriptionRepository.save(subscription));
     }

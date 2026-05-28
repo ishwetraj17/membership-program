@@ -269,6 +269,21 @@ class MembershipApplicationTests {
             assertThat(active.get().getTier()).isEqualTo("GOLD");
         }
 
+        @Test @DisplayName("Downgrade subscription to lower tier")
+        void downgradeSubscription() {
+            UserDTO user = userService.createUser(testUser("Downgrade User", "downgrade"));
+            MembershipPlanDTO goldPlan = planOf("GOLD", MembershipPlan.PlanType.MONTHLY);
+            SubscriptionDTO sub = subscriptionService.createSubscription(
+                    SubscriptionRequestDTO.builder().userId(user.getId()).planId(goldPlan.getId()).autoRenewal(false).build());
+
+            MembershipPlanDTO silverPlan = planOf("SILVER", MembershipPlan.PlanType.MONTHLY);
+            SubscriptionDTO downgraded = subscriptionService.downgradeSubscription(sub.getId(), silverPlan.getId());
+
+            assertThat(downgraded.getTier()).isEqualTo("SILVER");
+            assertThat(downgraded.getTierLevel()).isEqualTo(1);
+            assertThat(downgraded.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+        }
+
         private MembershipPlanDTO silverMonthly() {
             return planOf("SILVER", MembershipPlan.PlanType.MONTHLY);
         }
@@ -313,6 +328,13 @@ class MembershipApplicationTests {
             UserDTO user = userService.createUser(testUser("Note User", "note"));
             TierEligibilityResult result = tierEvaluationService.evaluateEligibleTier(user.getId());
             assertThat(result.getEvaluationNote()).isNotBlank();
+        }
+
+        @Test @DisplayName("isEligibleForTier throws MembershipException for unknown tier name")
+        void invalidTierThrowsMembershipException() {
+            UserDTO user = userService.createUser(testUser("Invalid Tier User", "invtier"));
+            assertThatThrownBy(() -> tierEvaluationService.isEligibleForTier(user.getId(), "DIAMOND"))
+                    .isInstanceOf(MembershipException.class);
         }
     }
 

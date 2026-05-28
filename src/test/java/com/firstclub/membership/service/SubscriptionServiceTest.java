@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
@@ -185,6 +186,70 @@ class SubscriptionServiceTest {
             verify(subscriptionRepository).save(active);
         }
 
+        @Test @DisplayName("upgrade extends endDate from current billing period start")
+        void upgradeExtendsEndDate() {
+            MembershipTier goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2)
+                    .discountPercentage(new BigDecimal("10.00"))
+                    .freeDelivery(true).exclusiveDeals(true)
+                    .earlyAccess(true).prioritySupport(false)
+                    .maxCouponsPerMonth(5).deliveryDays(3)
+                    .additionalBenefits("Gold perks").build();
+
+            MembershipPlan goldYearly = MembershipPlan.builder()
+                    .id(6L).name("Gold Yearly")
+                    .description("Gold yearly plan")
+                    .type(MembershipPlan.PlanType.YEARLY)
+                    .price(new BigDecimal("5089.80"))
+                    .durationInMonths(12)
+                    .isActive(true)
+                    .tier(goldTier).build();
+
+            Subscription active = buildActiveSubscription();
+            LocalDateTime expectedEnd = active.getStartDate().plusMonths(12);
+
+            when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(planRepository.findById(6L)).thenReturn(Optional.of(goldYearly));
+            when(subscriptionRepository.save(active)).thenReturn(active);
+
+            SubscriptionDTO result = subscriptionService.upgradeSubscription(active.getId(), 6L);
+
+            assertThat(result.getEndDate()).isEqualTo(expectedEnd);
+            assertThat(result.getNextBillingDate()).isEqualTo(expectedEnd);
+        }
+
+        @Test @DisplayName("upgrade adds pro-rated cost difference to paidAmount")
+        void upgradeAddsProratedAdjustment() {
+            MembershipTier goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2)
+                    .discountPercentage(new BigDecimal("10.00"))
+                    .freeDelivery(true).exclusiveDeals(true)
+                    .earlyAccess(true).prioritySupport(false)
+                    .maxCouponsPerMonth(5).deliveryDays(3)
+                    .additionalBenefits("Gold perks").build();
+
+            MembershipPlan goldMonthly = MembershipPlan.builder()
+                    .id(4L).name("Gold Monthly")
+                    .description("Gold monthly plan")
+                    .type(MembershipPlan.PlanType.MONTHLY)
+                    .price(new BigDecimal("499.00"))
+                    .durationInMonths(1)
+                    .isActive(true)
+                    .tier(goldTier).build();
+
+            Subscription active = buildActiveSubscription(); // paidAmount = 299.00, just started
+            when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(planRepository.findById(4L)).thenReturn(Optional.of(goldMonthly));
+            when(subscriptionRepository.save(active)).thenReturn(active);
+
+            SubscriptionDTO result = subscriptionService.upgradeSubscription(active.getId(), 4L);
+
+            // Pro-rated adjustment must increase paidAmount above the original Silver price
+            assertThat(result.getPaidAmount()).isGreaterThan(new BigDecimal("299.00"));
+            // Adjustment cannot exceed the full Silver + Gold price (upper bound)
+            assertThat(result.getPaidAmount()).isLessThanOrEqualTo(new BigDecimal("798.00"));
+        }
+
         @Test @DisplayName("downgrade attempt via upgrade path — throws MembershipException")
         void downgradeThrows() {
             Subscription active = buildActiveSubscription();
@@ -201,6 +266,142 @@ class SubscriptionServiceTest {
 
             assertThatThrownBy(() -> subscriptionService.upgradeSubscription(active.getId(), 1L))
                     .isInstanceOf(MembershipException.class);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // downgradeSubscription
+    // ═══════════════════════════════════════════════════════════
+
+    @Nested @DisplayName("downgradeSubscription")
+    class DowngradeSubscription {
+
+        @Test @DisplayName("downgrade to lower tier changes plan and tier")
+        void success() {
+            MembershipTier goldTier = MembershipTier.builder()
+                    .id(2L).name("GOLD").level(2)
+                    .discountPercentage(new BigDecimal("10.00"))
+                    .freeDelivery(true).exclusiveDeals(true)
+                    .earlyAccess(true).prioritySupport(false)
+                    .maxCouponsPerMonth(5).deliveryDays(3)
+                    .additionalBenefits("Gold perks").build();
+
+            Subscription active = buildActiveSubscription();
+            active.setPlan(buildPlanForTier(goldTier)); // subscription is currently Gold
+
+            when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(planRepository.findById(1L)).thenReturn(Optional.of(silverMonthly));
+            when(subscriptionRepository.save(active)).thenReturn(active);
+
+            SubscriptionDTO result = subscriptionService.downgradeSubscription(active.getId(), 1L);
+
+            assertThat(result.getTier()).isEqualTo("SILVER");
+            assertThat(result.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            verify(subscriptionRepository).save(active);
+        }
+
+        @Test @DisplayName("downgrade to same or higher tier throws MembershipException")
+        void sameOrHigherTierThrows() {
+            Subscription active = buildActiveSubscription(); // Silver (level 1)
+            when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(planRepository.findById(1L)).thenReturn(Optional.of(silverMonthly)); // same tier
+
+            assertThatThrownBy(() -> subscriptionService.downgradeSubscription(active.getId(), 1L))
+                    .isInstanceOf(MembershipException.class);
+
+            verify(subscriptionRepository, never()).save(any());
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // renewSubscription
+    // ═══════════════════════════════════════════════════════════
+
+    @Nested @DisplayName("renewSubscription")
+    class RenewSubscription {
+
+        @Test @DisplayName("renewal activates period from now, resets paidAmount to plan price")
+        void renewalResetsToActivePeriod() {
+            LocalDateTime oldEnd = LocalDateTime.now().minusDays(5);
+            Subscription expired = Subscription.builder()
+                    .id(200L)
+                    .user(testUser)
+                    .plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.EXPIRED)
+                    .startDate(oldEnd.minusMonths(1))
+                    .endDate(oldEnd)
+                    .nextBillingDate(oldEnd)
+                    .paidAmount(new BigDecimal("150.00")) // differs from plan price intentionally
+                    .autoRenewal(false)
+                    .version(0L)
+                    .build();
+
+            when(subscriptionRepository.findById(200L)).thenReturn(Optional.of(expired));
+            when(subscriptionRepository.save(expired)).thenReturn(expired);
+
+            SubscriptionDTO result = subscriptionService.renewSubscription(200L);
+
+            assertThat(result.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            // new period starts after old expiry
+            assertThat(result.getStartDate()).isAfter(oldEnd);
+            // endDate is strictly after startDate
+            assertThat(result.getEndDate()).isAfter(result.getStartDate());
+            // nextBillingDate must equal endDate
+            assertThat(result.getNextBillingDate()).isEqualTo(result.getEndDate());
+            // paidAmount resets to current plan price (Fix 4 regression guard)
+            assertThat(result.getPaidAmount()).isEqualByComparingTo(silverMonthly.getPrice());
+        }
+
+        @Test @DisplayName("cannot renew non-expired subscription")
+        void renewActiveThrows() {
+            Subscription active = buildActiveSubscription();
+            when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
+
+            assertThatThrownBy(() -> subscriptionService.renewSubscription(active.getId()))
+                    .isInstanceOf(MembershipException.class);
+
+            verify(subscriptionRepository, never()).save(any());
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // processRenewals (scheduler path)
+    // ═══════════════════════════════════════════════════════════
+
+    @Nested @DisplayName("processRenewals")
+    class ProcessRenewals {
+
+        @Test @DisplayName("auto-renewal advances startDate to previous endDate and resets paidAmount")
+        void renewalAdvancesBillingPeriod() {
+            LocalDateTime periodStart = LocalDateTime.now().minusMonths(1);
+            LocalDateTime periodEnd = LocalDateTime.now().plusHours(12);
+
+            Subscription due = Subscription.builder()
+                    .id(300L)
+                    .user(testUser)
+                    .plan(silverMonthly)
+                    .status(Subscription.SubscriptionStatus.ACTIVE)
+                    .startDate(periodStart)
+                    .endDate(periodEnd)
+                    .nextBillingDate(periodEnd)
+                    .paidAmount(new BigDecimal("150.00")) // differs from plan price intentionally
+                    .autoRenewal(true)
+                    .version(0L)
+                    .build();
+
+            when(subscriptionRepository.findSubscriptionsForRenewal(any())).thenReturn(List.of(due));
+            when(subscriptionRepository.saveAll(anyList())).thenReturn(List.of(due));
+
+            subscriptionService.processRenewals();
+
+            // startDate advances to the previous period's end (Fix 1 regression guard)
+            assertThat(due.getStartDate()).isEqualTo(periodEnd);
+            // endDate extends by plan duration from the new startDate
+            assertThat(due.getEndDate()).isEqualTo(periodEnd.plusMonths(1));
+            // nextBillingDate always equals endDate
+            assertThat(due.getNextBillingDate()).isEqualTo(due.getEndDate());
+            // paidAmount resets to plan price (Fix 4 regression guard)
+            assertThat(due.getPaidAmount()).isEqualByComparingTo(silverMonthly.getPrice());
         }
     }
 
