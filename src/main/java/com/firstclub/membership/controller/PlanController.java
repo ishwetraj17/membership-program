@@ -2,6 +2,7 @@ package com.firstclub.membership.controller;
 
 import com.firstclub.membership.dto.MembershipPlanDTO;
 import com.firstclub.membership.entity.MembershipPlan;
+import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.service.PlanService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -73,9 +74,8 @@ public class PlanController {
     })
     public ResponseEntity<MembershipPlanDTO> getPlanById(
             @Parameter(description = "Plan ID", example = "1") @PathVariable Long id) {
-        return planService.getPlanById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(planService.getPlanById(id)
+                .orElseThrow(() -> MembershipException.planNotFound(id)));
     }
 
     @GetMapping("/compare")

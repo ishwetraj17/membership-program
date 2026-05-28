@@ -22,6 +22,7 @@ public interface SubscriptionService {
     Optional<SubscriptionDTO> getActiveSubscription(Long userId);
     List<SubscriptionDTO> getUserSubscriptions(Long userId);
     Page<SubscriptionDTO> getAllSubscriptions(Pageable pageable);
+    boolean subscriptionBelongsToUser(Long subscriptionId, Long userId);
 
     // ─── Background jobs ──────────────────────────────────────
     void processExpiredSubscriptions();

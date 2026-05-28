@@ -2,6 +2,7 @@ package com.firstclub.membership.controller;
 
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
+import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.PlanService;
 import com.firstclub.membership.service.SubscriptionService;
@@ -76,9 +77,8 @@ public class MembershipController {
         @ApiResponse(responseCode = "404", description = "Plan not found")
     })
     public ResponseEntity<MembershipPlanDTO> getPlanById(@PathVariable Long id) {
-        return planService.getPlanById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(planService.getPlanById(id)
+                .orElseThrow(() -> MembershipException.planNotFound(id)));
     }
 
     // ─── Tiers ────────────────────────────────────────────────────────────────
@@ -97,17 +97,15 @@ public class MembershipController {
     })
     public ResponseEntity<TierDTO> getTierByName(
             @Parameter(example = "PLATINUM") @PathVariable String name) {
-        return membershipService.getTierByName(name)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(membershipService.getTierByName(name)
+                .orElseThrow(() -> MembershipException.tierNotFound(name)));
     }
 
     @GetMapping("/tiers/id/{id}")
     @Operation(summary = "Get tier by ID")
     public ResponseEntity<TierDTO> getTierById(@PathVariable Long id) {
-        return membershipService.getTierById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(membershipService.getTierById(id)
+                .orElseThrow(() -> MembershipException.tierNotFound("ID: " + id)));
     }
 
     // ─── Subscriptions ────────────────────────────────────────────────────────
@@ -143,9 +141,11 @@ public class MembershipController {
         @ApiResponse(responseCode = "404", description = "No active subscription")
     })
     public ResponseEntity<SubscriptionDTO> getActiveSubscription(@PathVariable Long userId) {
-        return subscriptionService.getActiveSubscription(userId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(subscriptionService.getActiveSubscription(userId)
+                .orElseThrow(() -> new MembershipException(
+                        "No active subscription for user " + userId,
+                        "NO_ACTIVE_SUBSCRIPTION",
+                        org.springframework.http.HttpStatus.NOT_FOUND)));
     }
 
     @PutMapping("/subscriptions/{id}")
@@ -166,7 +166,7 @@ public class MembershipController {
         return ResponseEntity.ok(subscriptionService.cancelSubscription(id, reason));
     }
 
-    @PostMapping("/subscriptions/{id}/renew")
+    @PutMapping("/subscriptions/{id}/renew")
     @Operation(summary = "Renew expired subscription")
     public ResponseEntity<SubscriptionDTO> renewSubscription(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionService.renewSubscription(id));
@@ -180,7 +180,7 @@ public class MembershipController {
         return ResponseEntity.ok(subscriptionService.upgradeSubscription(id, request.getNewPlanId()));
     }
 
-    @PostMapping("/subscriptions/{id}/downgrade")
+    @PutMapping("/subscriptions/{id}/downgrade")
     @Operation(summary = "Downgrade subscription to lower tier")
     public ResponseEntity<SubscriptionDTO> downgradeSubscription(
             @PathVariable Long id,

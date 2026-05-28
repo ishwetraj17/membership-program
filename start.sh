@@ -200,8 +200,9 @@ PLAN_COUNT=$(curl -s "http://localhost:${APP_PORT}/api/v1/membership/plans" 2>/d
   | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 TIER_COUNT=$(curl -s "http://localhost:${APP_PORT}/api/v1/membership/tiers" 2>/dev/null \
   | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+# GET /users is paginated — read totalElements from the Page envelope
 USER_COUNT=$(curl -s "http://localhost:${APP_PORT}/api/v1/users" 2>/dev/null \
-  | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('totalElements', 0))" 2>/dev/null || echo "0")
 
 [[ "$PLAN_COUNT" -eq 9 ]] || fail "Expected 9 plans, got $PLAN_COUNT"
 [[ "$TIER_COUNT" -eq 3 ]] || fail "Expected 3 tiers, got $TIER_COUNT"
@@ -229,7 +230,7 @@ echo -e "  ${BOLD}Database${RESET}"
 echo -e "  ${CYAN}$DB_NAME  (freshly recreated — zero stale data)${RESET}"
 echo ""
 echo -e "  ${GREEN}✅ PostgreSQL running${RESET}"
-echo -e "  ${GREEN}✅ Flyway migrations applied (V1 V2 V3)${RESET}"
+echo -e "  ${GREEN}✅ Flyway migrations applied (V1 V2 V3 V4)${RESET}"
 echo -e "  ${GREEN}✅ Application started${RESET}"
 echo -e "  ${GREEN}✅ Health endpoint verified${RESET}"
 echo -e "  ${GREEN}✅ Swagger verified${RESET}"

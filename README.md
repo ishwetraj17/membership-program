@@ -32,6 +32,7 @@ Users subscribe to **Silver / Gold / Platinum** membership tiers with **Monthly 
 │  V1: core schema + partial unique index                              │
 │  V2: tier eligibility criteria                                       │
 │  V3: scheduler performance indexes                                   │
+│  V4: optimistic locking version on users                            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -133,7 +134,7 @@ mvn clean compile
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-Flyway automatically runs all pending migrations (`V1`, `V2`, `V3`) on startup. `ddl-auto: validate` then verifies that Hibernate's view of the schema matches what Flyway created. If there is any mismatch the application refuses to start.
+Flyway automatically runs all pending migrations (`V1`, `V2`, `V3`, `V4`) on startup. `ddl-auto: validate` then verifies that Hibernate's view of the schema matches what Flyway created. If there is any mismatch the application refuses to start.
 
 ### 6. Stop the application
 
@@ -219,7 +220,7 @@ Run `./start.sh` first. Then use Swagger UI at `http://localhost:8080/swagger-ui
 | 6 | `GET /api/v1/users/{id}/tier-eligibility` | Dynamic eligibility evaluation — shows orderCount, spend, eligible tier |
 | 7 | `POST /api/v1/membership/subscriptions` | Subscribe to Gold Monthly (`planId: 4`) |
 | 8 | `PUT /api/v1/membership/subscriptions/{id}/upgrade` | Upgrade to Gold Yearly (`newPlanId: 6`) — shows pro-rated `paidAmount` |
-| 9 | `POST /api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to Silver Monthly (`newPlanId: 1`) |
+| 9 | `PUT /api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to Silver Monthly (`newPlanId: 1`) |
 | 10 | `PUT /api/v1/membership/subscriptions/{id}/cancel` | Cancel — `cancelledAt` and reason populated |
 | 11 | `GET /api/v1/membership/analytics` | Revenue, tier distribution, subscription counts |
 
@@ -363,21 +364,24 @@ Plan and tier lists — stable reference data queried on every request — are c
 
 ### Subscriptions
 
+All state transitions use `PUT`. This is deliberate — each is an idempotent targeted update on a sub-resource.
+
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/membership/subscriptions` | Create subscription |
 | GET | `/api/v1/membership/subscriptions` | Paginated admin list (`?page=0&size=20&sort=id,desc`) |
 | GET | `/api/v1/membership/subscriptions/user/{userId}/active` | User's current active subscription |
 | PUT | `/api/v1/membership/subscriptions/{id}/upgrade` | Upgrade to higher tier or longer duration |
-| POST | `/api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to lower tier |
+| PUT | `/api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to lower tier |
 | PUT | `/api/v1/membership/subscriptions/{id}/cancel` | Cancel active subscription |
-| POST | `/api/v1/membership/subscriptions/{id}/renew` | Renew expired subscription |
+| PUT | `/api/v1/membership/subscriptions/{id}/renew` | Renew expired subscription |
 
 ### Users
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/users` | Create user |
+| GET | `/api/v1/users` | Paginated user list (`?page=0&size=10&sort=name,asc`) |
 | GET | `/api/v1/users/{id}` | Get user |
 | GET | `/api/v1/users/email/{email}` | Look up user by email |
 | PATCH | `/api/v1/users/{id}` | Partial update (name, phone, address, city, state, pincode, status) |
@@ -438,7 +442,7 @@ The `prod` profile:
 | No payment gateway | `paidAmount` tracks billing; pro-rata logic is fully implemented without a real payment call |
 | Caffeine over Redis | Single-instance; Redis adds operational complexity without benefit here |
 | Monolith over microservices | Membership domain at startup scale; service decomposition is premature |
-| `getAllUsers()` unbounded | Demo convenience; production would add `Pageable` |
+| `getUserSubscriptions()` returns a List | Subscription history for one user is bounded in practice; a `Page` return here adds call-site complexity for marginal benefit |
 
 ## What Was Intentionally Not Built
 

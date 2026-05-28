@@ -8,6 +8,8 @@ import com.firstclub.membership.repository.UserRepository;
 import com.firstclub.membership.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -83,6 +85,12 @@ public class UserServiceImpl implements UserService {
         return userRepository.findAll().stream()
             .map(this::convertToDTO)
             .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<UserDTO> getUsers(Pageable pageable) {
+        return userRepository.findAll(pageable).map(this::convertToDTO);
     }
 
     @Override

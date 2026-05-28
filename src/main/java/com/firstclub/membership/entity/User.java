@@ -48,6 +48,15 @@ public class User {
     @Column(nullable = false)
     private String pincode;
 
+    /**
+     * Optimistic-locking version — prevents concurrent PATCH requests from
+     * silently overwriting each other (read-modify-write race).
+     * Mirrors the same pattern used on Subscription.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserStatus status;

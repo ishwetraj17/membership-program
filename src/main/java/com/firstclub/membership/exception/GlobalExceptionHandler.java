@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -103,6 +104,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnreadableMessage(HttpMessageNotReadableException e) {
         return ResponseEntity.badRequest()
                 .body(error("Malformed or unreadable request body", "MALFORMED_REQUEST", 400, null));
+    }
+
+    /**
+     * Catches unsupported HTTP method errors (e.g. POST on a PUT-only endpoint).
+     * Without this handler the catch-all returns 500; this returns the correct 405.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        String message = String.format("HTTP method '%s' is not supported for this endpoint. Allowed: %s",
+                e.getMethod(), e.getSupportedHttpMethods());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(error(message, "METHOD_NOT_ALLOWED", 405, null));
     }
 
     @ExceptionHandler(Exception.class)

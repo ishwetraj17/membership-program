@@ -233,6 +233,12 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         return subscriptionRepository.findAllWithAssociations(pageable).map(this::convertToDTO);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public boolean subscriptionBelongsToUser(Long subscriptionId, Long userId) {
+        return subscriptionRepository.existsByIdAndUserId(subscriptionId, userId);
+    }
+
     // ─── Background jobs ──────────────────────────────────────────────────────
 
     @Override

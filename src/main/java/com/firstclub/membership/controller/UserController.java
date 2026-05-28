@@ -14,6 +14,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -51,23 +54,32 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> getUserById(@PathVariable Long id) {
-        return userService.getUserById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(userService.getUserById(id)
+                .orElseThrow(() -> MembershipException.userNotFound(id)));
     }
 
     @GetMapping("/email/{email}")
     @Operation(summary = "Get user by email")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "User found"),
+        @ApiResponse(responseCode = "404", description = "User not found")
+    })
     public ResponseEntity<UserDTO> getUserByEmail(@PathVariable String email) {
-        return userService.getUserByEmail(email)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(userService.getUserByEmail(email)
+                .orElseThrow(() -> new MembershipException(
+                        "User with email '" + email + "' not found",
+                        "USER_NOT_FOUND",
+                        org.springframework.http.HttpStatus.NOT_FOUND)));
     }
 
     @GetMapping
-    @Operation(summary = "Get all users")
-    public ResponseEntity<List<UserDTO>> getAllUsers() {
-        return ResponseEntity.ok(userService.getAllUsers());
+    @Operation(
+        summary = "Get all users (paginated)",
+        description = "Supports optional pagination: ?page=0&size=10&sort=id,desc. Omit parameters for defaults (page=0, size=20)."
+    )
+    public ResponseEntity<Page<UserDTO>> getAllUsers(
+            @PageableDefault(size = 20, sort = "id") Pageable pageable) {
+        return ResponseEntity.ok(userService.getUsers(pageable));
     }
 
     @PutMapping("/{id}")
@@ -121,11 +133,17 @@ public class UserController {
 
     @GetMapping("/{userId}/subscription")
     @Operation(summary = "Get user's active subscription")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Active subscription found"),
+        @ApiResponse(responseCode = "404", description = "No active subscription or user not found")
+    })
     public ResponseEntity<SubscriptionDTO> getActiveSubscription(@PathVariable Long userId) {
         requireUser(userId);
-        return subscriptionService.getActiveSubscription(userId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(subscriptionService.getActiveSubscription(userId)
+                .orElseThrow(() -> new MembershipException(
+                        "No active subscription for user " + userId,
+                        "NO_ACTIVE_SUBSCRIPTION",
+                        org.springframework.http.HttpStatus.NOT_FOUND)));
     }
 
     @GetMapping("/{userId}/subscriptions")
@@ -169,7 +187,7 @@ public class UserController {
         return ResponseEntity.ok(subscriptionService.upgradeSubscription(subscriptionId, request.getNewPlanId()));
     }
 
-    @PostMapping("/{userId}/subscriptions/{subscriptionId}/cancel")
+    @PutMapping("/{userId}/subscriptions/{subscriptionId}/cancel")
     @Operation(summary = "Cancel user's subscription")
     public ResponseEntity<SubscriptionDTO> cancelSubscription(
             @PathVariable Long userId,
@@ -201,16 +219,13 @@ public class UserController {
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     private void requireUser(Long userId) {
-        if (userService.getUserById(userId).isEmpty()) {
-            throw MembershipException.userNotFound(userId);
-        }
+        userService.getUserById(userId)
+                .orElseThrow(() -> MembershipException.userNotFound(userId));
     }
 
     private void requireUserOwnsSubscription(Long userId, Long subscriptionId) {
         requireUser(userId);
-        boolean owned = subscriptionService.getUserSubscriptions(userId).stream()
-                .anyMatch(s -> s.getId().equals(subscriptionId));
-        if (!owned) {
+        if (!subscriptionService.subscriptionBelongsToUser(subscriptionId, userId)) {
             throw MembershipException.subscriptionNotOwnedByUser(subscriptionId, userId);
         }
     }

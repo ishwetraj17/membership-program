@@ -38,6 +38,9 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
            "AND s.status = 'ACTIVE' AND s.endDate > :now")
     boolean hasActiveSubscriptions(@Param("user") User user, @Param("now") LocalDateTime now);
 
+    /** Single-query ownership check — avoids loading all user subscriptions just to verify one. */
+    boolean existsByIdAndUserId(Long subscriptionId, Long userId);
+
     /**
      * Single UPDATE statement — avoids loading expired rows into memory.
      * version is incremented so that any concurrent upgrade transaction that loaded
