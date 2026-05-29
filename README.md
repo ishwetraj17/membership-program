@@ -71,7 +71,7 @@ This is the primary way to run the project locally. One command resets the envir
 1. Kills any existing process on port 8080
 2. Ensures PostgreSQL is running (starts it via `brew services` if stopped)
 3. Terminates active DB connections, drops `membershipdb`, recreates it empty
-4. Launches `mvn spring-boot:run --profiles=dev` in the background
+4. Launches `mvn spring-boot:run -Dspring-boot.run.profiles=dev` in the background
 5. Waits for `Started MembershipApplication` in the log
 6. Verifies health endpoint (HTTP 200, `status=UP`) and Swagger UI (HTTP 200)
 7. Confirms seed data: 3 tiers, 9 plans, 3 demo users
@@ -236,7 +236,7 @@ done
 wait
 ```
 
-Expected: exactly 1 × HTTP 201, 4 × HTTP 409 `USER_ALREADY_SUBSCRIBED`.
+Expected: exactly 1 × HTTP 201, 4 × HTTP 409 (`USER_ALREADY_SUBSCRIBED` or `DATA_INTEGRITY_VIOLATION` — both are 409; which fires depends on whether the application-level guard or the DB partial unique index catches the race).
 
 ---
 
@@ -265,7 +265,7 @@ All prices and multipliers are in `application.yml` — no code change needed to
 ```
 PENDING ──► ACTIVE ──► CANCELLED  (terminal)
                   └──► SUSPENDED ──► ACTIVE
-                  └──► EXPIRED   ──► ACTIVE  (via POST /renew only)
+                  └──► EXPIRED   ──► ACTIVE  (via PUT /renew only)
 ```
 
 One ACTIVE subscription per user is enforced at the database level by a PostgreSQL partial unique index.
@@ -370,7 +370,9 @@ All state transitions use `PUT`. This is deliberate — each is an idempotent ta
 |---|---|---|
 | POST | `/api/v1/membership/subscriptions` | Create subscription |
 | GET | `/api/v1/membership/subscriptions` | Paginated admin list (`?page=0&size=20&sort=id,desc`) |
+| GET | `/api/v1/membership/subscriptions/user/{userId}` | All subscriptions for a user |
 | GET | `/api/v1/membership/subscriptions/user/{userId}/active` | User's current active subscription |
+| PUT | `/api/v1/membership/subscriptions/{id}` | Update subscription settings (autoRenewal, status) |
 | PUT | `/api/v1/membership/subscriptions/{id}/upgrade` | Upgrade to higher tier or longer duration |
 | PUT | `/api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to lower tier |
 | PUT | `/api/v1/membership/subscriptions/{id}/cancel` | Cancel active subscription |
@@ -384,10 +386,15 @@ All state transitions use `PUT`. This is deliberate — each is an idempotent ta
 | GET | `/api/v1/users` | Paginated user list (`?page=0&size=10&sort=name,asc`) |
 | GET | `/api/v1/users/{id}` | Get user |
 | GET | `/api/v1/users/email/{email}` | Look up user by email |
+| PUT | `/api/v1/users/{id}` | Full update (all fields replaced) |
 | PATCH | `/api/v1/users/{id}` | Partial update (name, phone, address, city, state, pincode, status) |
 | DELETE | `/api/v1/users/{id}` | Delete user (blocked if ACTIVE subscription exists) |
 | GET | `/api/v1/users/{id}/tier-eligibility` | Dynamic tier eligibility evaluation |
+| GET | `/api/v1/users/{userId}/subscription` | User's active subscription |
 | GET | `/api/v1/users/{userId}/subscriptions` | User's subscription history |
+| POST | `/api/v1/users/{userId}/subscriptions` | Create subscription (userId taken from path) |
+| PUT | `/api/v1/users/{userId}/subscriptions/{subscriptionId}/upgrade` | User-scoped upgrade |
+| PUT | `/api/v1/users/{userId}/subscriptions/{subscriptionId}/cancel` | User-scoped cancel |
 
 ### Observability
 
