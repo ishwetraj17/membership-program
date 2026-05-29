@@ -13,6 +13,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -96,6 +97,17 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity.badRequest()
                 .body(error(message, "INVALID_PARAMETER_VALUE", 400, null));
+    }
+
+    /**
+     * Catches missing required request parameters (e.g. /plans/compare without ?planIds=).
+     * Without this handler the catch-all returns 500; this returns the correct 400.
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParam(MissingServletRequestParameterException e) {
+        String message = String.format("Required parameter '%s' is missing", e.getParameterName());
+        return ResponseEntity.badRequest()
+                .body(error(message, "MISSING_REQUIRED_PARAMETER", 400, null));
     }
 
     /**
