@@ -19,6 +19,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.SmartValidator;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -34,6 +37,7 @@ public class UserController {
     private final UserService userService;
     private final SubscriptionService subscriptionService;
     private final TierEvaluationService tierEvaluationService;
+    private final SmartValidator validator;
 
     // ─── User CRUD ────────────────────────────────────────────────────────────
 
@@ -161,9 +165,15 @@ public class UserController {
     })
     public ResponseEntity<SubscriptionDTO> createSubscription(
             @PathVariable Long userId,
-            @Valid @RequestBody SubscriptionRequestDTO request) {
+            @RequestBody SubscriptionRequestDTO request) throws MethodArgumentNotValidException {
         requireUser(userId);
+        // Set userId from path before validation so @NotNull on userId passes
         request.setUserId(userId);
+        var bindingResult = new BeanPropertyBindingResult(request, "request");
+        validator.validate(request, bindingResult);
+        if (bindingResult.hasErrors()) {
+            throw new MethodArgumentNotValidException(null, bindingResult);
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
     }
 

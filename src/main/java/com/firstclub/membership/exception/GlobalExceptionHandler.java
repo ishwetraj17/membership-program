@@ -17,6 +17,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -141,6 +142,17 @@ public class GlobalExceptionHandler {
                 e.getMethod(), e.getSupportedHttpMethods());
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(error(message, "METHOD_NOT_ALLOWED", 405, null));
+    }
+
+    /**
+     * Catches unmatched request paths — Spring 6.1 replaced NoHandlerFoundException
+     * with NoResourceFoundException for routes that don't match any controller.
+     * Without this handler the catch-all returns 500; this returns the correct 404.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(error("No endpoint found for this request", "ENDPOINT_NOT_FOUND", 404, null));
     }
 
     @ExceptionHandler(Exception.class)
