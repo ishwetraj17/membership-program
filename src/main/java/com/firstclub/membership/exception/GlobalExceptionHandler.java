@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.data.mapping.PropertyReferenceException;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
@@ -123,6 +124,20 @@ public class GlobalExceptionHandler {
         String message = String.format("Invalid sort field '%s'", e.getPropertyName());
         return ResponseEntity.badRequest()
                 .body(error(message, "INVALID_SORT_FIELD", 400, null));
+    }
+
+    /**
+     * Catches invalid sort fields on endpoints backed by a custom @Query.
+     * For custom JPQL queries, Spring Data bypasses its derived-method validation and
+     * passes the sort directly to Hibernate, which throws UnknownPathException wrapped in
+     * InvalidDataAccessApiUsageException — not PropertyReferenceException.
+     * Without this handler the catch-all returns 500; this returns the correct 400.
+     */
+    @ExceptionHandler(InvalidDataAccessApiUsageException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidDataAccess(InvalidDataAccessApiUsageException e) {
+        log.warn("Invalid data access usage: {}", e.getMostSpecificCause().getMessage());
+        return ResponseEntity.badRequest()
+                .body(error("Invalid sort or query parameter", "INVALID_SORT_FIELD", 400, null));
     }
 
     /**
