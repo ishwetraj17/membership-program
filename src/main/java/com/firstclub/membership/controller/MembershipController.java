@@ -152,7 +152,7 @@ public class MembershipController {
     @Operation(summary = "Update subscription settings")
     public ResponseEntity<SubscriptionDTO> updateSubscription(
             @PathVariable Long id,
-            @RequestBody SubscriptionUpdateDTO updateDTO) {
+            @Valid @RequestBody SubscriptionUpdateDTO updateDTO) {
         return ResponseEntity.ok(subscriptionService.updateSubscription(id, updateDTO));
     }
 

@@ -9,6 +9,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
@@ -34,8 +36,8 @@ public class GlobalExceptionHandler {
                 .body(error(e.getMessage(), e.getErrorCode(), e.getHttpStatus().value(), null));
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException e) {
+    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
+    public ResponseEntity<ErrorResponse> handleValidation(BindException e) {
         Map<String, String> fieldErrors = new HashMap<>();
         e.getBindingResult().getAllErrors().forEach(err ->
                 fieldErrors.put(((FieldError) err).getField(), err.getDefaultMessage()));
@@ -109,6 +111,18 @@ public class GlobalExceptionHandler {
         String message = String.format("Required parameter '%s' is missing", e.getParameterName());
         return ResponseEntity.badRequest()
                 .body(error(message, "MISSING_REQUIRED_PARAMETER", 400, null));
+    }
+
+    /**
+     * Catches invalid sort field names (e.g. ?sort=nonExistentField,desc).
+     * Spring Data throws PropertyReferenceException when the field doesn't exist on the entity.
+     * Without this handler the catch-all returns 500; this returns the correct 400.
+     */
+    @ExceptionHandler(PropertyReferenceException.class)
+    public ResponseEntity<ErrorResponse> handlePropertyReference(PropertyReferenceException e) {
+        String message = String.format("Invalid sort field '%s'", e.getPropertyName());
+        return ResponseEntity.badRequest()
+                .body(error(message, "INVALID_SORT_FIELD", 400, null));
     }
 
     /**

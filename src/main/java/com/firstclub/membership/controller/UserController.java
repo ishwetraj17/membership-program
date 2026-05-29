@@ -19,9 +19,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.BindException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.SmartValidator;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -96,7 +96,7 @@ public class UserController {
     @Operation(summary = "Partially update user")
     public ResponseEntity<UserDTO> partialUpdateUser(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> updates) {
+            @RequestBody Map<String, Object> updates) throws BindException {
 
         UserDTO current = userService.getUserById(id)
                 .orElseThrow(() -> MembershipException.userNotFound(id));
@@ -116,6 +116,12 @@ public class UserController {
                     "Invalid status '" + statusValue + "'. Valid values: ACTIVE, INACTIVE, SUSPENDED",
                     "INVALID_STATUS_VALUE");
             }
+        }
+
+        var bindingResult = new BeanPropertyBindingResult(current, "userDTO");
+        validator.validate(current, bindingResult);
+        if (bindingResult.hasErrors()) {
+            throw new BindException(bindingResult);
         }
 
         return ResponseEntity.ok(userService.updateUser(id, current));
@@ -165,14 +171,14 @@ public class UserController {
     })
     public ResponseEntity<SubscriptionDTO> createSubscription(
             @PathVariable Long userId,
-            @RequestBody SubscriptionRequestDTO request) throws MethodArgumentNotValidException {
+            @RequestBody SubscriptionRequestDTO request) throws BindException {
         requireUser(userId);
         // Set userId from path before validation so @NotNull on userId passes
         request.setUserId(userId);
         var bindingResult = new BeanPropertyBindingResult(request, "request");
         validator.validate(request, bindingResult);
         if (bindingResult.hasErrors()) {
-            throw new MethodArgumentNotValidException(null, bindingResult);
+            throw new BindException(bindingResult);
         }
         return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
     }

@@ -15,6 +15,22 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * DEMO IMPLEMENTATION
+ *
+ * Tier eligibility is currently calculated using deterministic mock data
+ * because the assignment does not provide a real Order Service,
+ * transaction history, or customer analytics source.
+ *
+ * In production, this service would integrate with:
+ * * Order Service (order count)
+ * * Payments/Commerce Service (monthly spend)
+ * * Customer Segmentation Service (cohort membership)
+ *
+ * Eligibility enforcement is intentionally not applied to subscription
+ * creation in this demo implementation to avoid making business decisions
+ * based on synthetic data.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j

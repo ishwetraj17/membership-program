@@ -30,7 +30,7 @@ public class DevDataInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!userService.getAllUsers().isEmpty()) {
+        if (userService.getUsers(org.springframework.data.domain.PageRequest.of(0, 1)).hasContent()) {
             log.debug("Dev users already present — skipping demo data.");
             return;
         }

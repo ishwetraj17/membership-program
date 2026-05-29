@@ -220,7 +220,7 @@ Run `./start.sh` first. Then use Swagger UI at `http://localhost:8080/swagger-ui
 | 6 | `GET /api/v1/users/{id}/tier-eligibility` | Dynamic eligibility evaluation — shows orderCount, spend, eligible tier |
 | 7 | `POST /api/v1/membership/subscriptions` | Subscribe to Gold Monthly (`planId: 4`) |
 | 8 | `PUT /api/v1/membership/subscriptions/{id}/upgrade` | Upgrade to Gold Yearly (`newPlanId: 6`) — shows pro-rated `paidAmount` |
-| 9 | `PUT /api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to Silver Monthly (`newPlanId: 1`) |
+| 9 | `PUT /api/v1/membership/subscriptions/{id}/downgrade` | Downgrade to Silver Monthly (`newPlanId: 1`) — `daysRemaining` drops to ~30, confirming `endDate` resets to the new plan's duration |
 | 10 | `PUT /api/v1/membership/subscriptions/{id}/cancel` | Cancel — `cancelledAt` and reason populated |
 | 11 | `GET /api/v1/membership/analytics` | Revenue, tier distribution, subscription counts |
 
@@ -339,6 +339,33 @@ CREATE INDEX idx_subscriptions_next_billing
 
 Plan and tier lists — stable reference data queried on every request — are cached for 10 minutes (`maximumSize=200, expireAfterWrite=10m`). No `@CacheEvict` is needed because there is no plan management API; the TTL is the backstop for any manual DB change.
 
+### Tier eligibility — demo implementation
+
+`TierEvaluationService` evaluates the highest tier a user qualifies for based on order count, monthly spend, and cohort membership. The evaluation engine, criteria table (`tier_eligibility_criteria`), and API endpoint (`GET /users/{id}/tier-eligibility`) are fully implemented.
+
+**The current implementation uses deterministic demo data**, not real order history, because the assignment does not provide an Order Service, transaction database, or customer segmentation source:
+
+- `fetchOrderSummary` derives order count as `(userId % 20) × 2` and monthly spend as `min(userId × ₹500, ₹10 000)`
+- `isUserInCohort` assigns even-numbered user IDs to `PREMIUM_COHORT` (the Platinum cohort gate)
+
+**Tier eligibility is intentionally not enforced during subscription creation.** Any user can subscribe to any plan regardless of their evaluated tier. Enforcing a gate based on synthetic demo data would produce incorrect business behaviour and misrepresent what the production system would do.
+
+In production, only the two private stub methods need replacing:
+
+| Integration point | Method to replace | Data provided |
+|---|---|---|
+| Order Service | `fetchOrderSummary()` | Rolling-window order count and spend |
+| Payments / Commerce Service | `fetchOrderSummary()` | Cumulative spend within the evaluation window |
+| Customer Segmentation Service | `isUserInCohort()` | Cohort assignment (e.g. `PREMIUM_COHORT`) |
+
+The `TierEvaluationService` interface, the criteria table, and the evaluation logic are production-ready. The wiring point for enforcement in `createSubscription()` — a call to `isEligibleForTier()` after the duplicate-active check — is intentionally left for when real data is available.
+
+### Upgrade and downgrade — endDate anchoring
+
+**Upgrade** recalculates `endDate` from the original `startDate` (`startDate + newPlan.durationInMonths`). This preserves the billing period anchor and feeds the pro-rated charge calculation: unused days on the current plan are credited against the cost of the remaining days on the new plan.
+
+**Downgrade** resets `endDate` to `now + newPlan.durationInMonths`. The plan change takes effect immediately; the new, shorter duration runs from the moment of the request. `paidAmount` is not adjusted on downgrade — no refund is calculated.
+
 ---
 
 ## API Reference
@@ -393,6 +420,7 @@ All state transitions use `PUT`. This is deliberate — each is an idempotent ta
 | GET | `/api/v1/users/{userId}/subscription` | User's active subscription |
 | GET | `/api/v1/users/{userId}/subscriptions` | User's subscription history |
 | POST | `/api/v1/users/{userId}/subscriptions` | Create subscription (userId taken from path) |
+| PUT | `/api/v1/users/{userId}/subscriptions/{subscriptionId}` | User-scoped subscription update (autoRenewal, status) |
 | PUT | `/api/v1/users/{userId}/subscriptions/{subscriptionId}/upgrade` | User-scoped upgrade |
 | PUT | `/api/v1/users/{userId}/subscriptions/{subscriptionId}/cancel` | User-scoped cancel |
 
@@ -445,7 +473,7 @@ The `prod` profile:
 | Decision | Rationale |
 |---|---|
 | No authentication | Out of scope; `requireUserOwnsSubscription()` demonstrates ownership awareness |
-| Tier eligibility stubs | `fetchOrderSummary` and `isUserInCohort` are documented stubs. The `TierEvaluationService` interface isolates both seams for easy replacement with real data sources (Order Service, cohort table). |
+| Tier eligibility — demo implementation | The evaluation engine and API are fully implemented; the underlying data is deterministic demo data, not real order history. Enforcement is intentionally absent from subscription creation. See the dedicated section in Key Design Decisions above for full context and the production integration map. |
 | No payment gateway | `paidAmount` tracks billing; pro-rata logic is fully implemented without a real payment call |
 | Caffeine over Redis | Single-instance; Redis adds operational complexity without benefit here |
 | Monolith over microservices | Membership domain at startup scale; service decomposition is premature |
@@ -456,4 +484,5 @@ The `prod` profile:
 - **Auth (OAuth2/JWT)** — cross-cutting concern; belongs in its own layer
 - **Webhook / event system** — requires a message broker
 - **Admin role separation** — RBAC belongs after the auth layer is in place
-- **Full order service integration** — tier eligibility uses a documented stub; the interface contract is defined and ready
+- **Tier eligibility enforcement at subscription time** — enforcement is intentionally absent while data is synthetic. When a real Order Service and spend history are available, the gate belongs in `createSubscription()` as a call to `TierEvaluationService.isEligibleForTier()` after the duplicate-active check. The wiring point is unambiguous.
+- **Full order service integration** — `TierEvaluationService` isolates the dependency. Only `fetchOrderSummary()` and `isUserInCohort()` need replacing; the interface, criteria table, and evaluation logic are production-ready.
