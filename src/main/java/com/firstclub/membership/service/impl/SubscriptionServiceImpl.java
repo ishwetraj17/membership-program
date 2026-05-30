@@ -205,7 +205,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         }
 
         subscription.setPlan(newPlan);
-        LocalDateTime newEnd = LocalDateTime.now().plusMonths(newPlan.getDurationInMonths());
+        LocalDateTime now = LocalDateTime.now();
+        subscription.setStartDate(now);
+        LocalDateTime newEnd = now.plusMonths(newPlan.getDurationInMonths());
         subscription.setEndDate(newEnd);
         subscription.setNextBillingDate(newEnd);
         return convertToDTO(subscriptionRepository.save(subscription));

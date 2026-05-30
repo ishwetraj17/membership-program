@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MembershipException.class)
     public ResponseEntity<ErrorResponse> handleMembershipException(MembershipException e) {
-        log.error("Membership error [{}]: {}", e.getErrorCode(), e.getMessage());
+        log.warn("Membership error [{}]: {}", e.getErrorCode(), e.getMessage());
         return ResponseEntity.status(e.getHttpStatus())
                 .body(error(e.getMessage(), e.getErrorCode(), e.getHttpStatus().value(), null));
     }

@@ -92,9 +92,8 @@ public class PlanController {
                         "INVALID_PARAMETER_VALUE");
                 }
             })
-            .map(planService::getPlanById)
-            .filter(java.util.Optional::isPresent)
-            .map(java.util.Optional::get)
+            .map(id -> planService.getPlanById(id)
+                    .orElseThrow(() -> MembershipException.planNotFound(id)))
             .toList();
         return ResponseEntity.ok(plans);
     }
@@ -104,17 +103,14 @@ public class PlanController {
     @ApiResponse(responseCode = "200", description = "OK")
     public ResponseEntity<Map<String, Object>> getRecommendations() {
         List<MembershipPlanDTO> all = planService.getActivePlans();
-        return ResponseEntity.ok(Map.of(
-            "mostPopular", all.stream()
-                .filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.YEARLY)
-                .findFirst().orElse(null),
-            "bestValue", all.stream()
-                .filter(p -> p.getType() == MembershipPlan.PlanType.YEARLY)
-                .max(java.util.Comparator.comparing(MembershipPlanDTO::getSavings))
-                .orElse(null),
-            "beginnerFriendly", all.stream()
-                .filter(p -> "SILVER".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
-                .findFirst().orElse(null)
-        ));
+        Map<String, Object> recommendations = new java.util.LinkedHashMap<>();
+        all.stream().filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.YEARLY)
+            .findFirst().ifPresent(p -> recommendations.put("mostPopular", p));
+        all.stream().filter(p -> p.getType() == MembershipPlan.PlanType.YEARLY)
+            .max(java.util.Comparator.comparing(MembershipPlanDTO::getSavings))
+            .ifPresent(p -> recommendations.put("bestValue", p));
+        all.stream().filter(p -> "SILVER".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+            .findFirst().ifPresent(p -> recommendations.put("beginnerFriendly", p));
+        return ResponseEntity.ok(recommendations);
     }
 }
