@@ -22,3 +22,15 @@ logging:
   level:
     root: WARN
     com.firstclub.membership: INFO
+
+# Security — MUST be overridden in production via environment variables.
+# The defaults in SecurityProperties are for local/demo use only.
+security:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-change-me-this-secret-must-be-at-least-32-bytes-long-0123456789}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:120}
+  seed:
+    admin-username: ${SEED_ADMIN_USERNAME:admin}
+    admin-password: ${SEED_ADMIN_PASSWORD:admin123}
+    user-username: ${SEED_USER_USERNAME:demo}
+    user-password: ${SEED_USER_PASSWORD:demo123}

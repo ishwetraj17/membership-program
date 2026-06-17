@@ -8,20 +8,20 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-@Repository
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
 
-    // Finding 6: JOIN FETCH user/plan/tier to prevent N+1 on list-to-DTO mapping
-    @Query("SELECT s FROM Subscription s JOIN FETCH s.user JOIN FETCH s.plan p JOIN FETCH p.tier " +
-           "WHERE s.user = :user ORDER BY s.createdAt DESC")
-    List<Subscription> findByUserOrderByCreatedAtDesc(@Param("user") User user);
+    // JOIN FETCH user/plan/tier to prevent N+1 on list-to-DTO mapping; paginated with a
+    // separate countQuery (required by Hibernate when the value query uses JOIN FETCH).
+    @Query(value = "SELECT s FROM Subscription s JOIN FETCH s.user JOIN FETCH s.plan p JOIN FETCH p.tier " +
+                   "WHERE s.user = :user",
+           countQuery = "SELECT COUNT(s) FROM Subscription s WHERE s.user = :user")
+    Page<Subscription> findByUser(@Param("user") User user, Pageable pageable);
 
     @Query("SELECT s FROM Subscription s WHERE s.user = :user " +
            "AND s.status = 'ACTIVE' AND s.endDate > :now")
@@ -47,9 +47,19 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
      * this subscription before expiry will fail with OptimisticLockException → 409,
      * preventing a race where an upgrade silently reactivates an expired subscription.
      */
+    /** Bulk-expire a specific set of subscriptions (version bumped to invalidate stale reads). */
     @Modifying
-    @Query("UPDATE Subscription s SET s.status = 'EXPIRED', s.version = s.version + 1 WHERE s.status = 'ACTIVE' AND s.endDate < :now")
-    int bulkExpireSubscriptions(@Param("now") LocalDateTime now);
+    @Query("UPDATE Subscription s SET s.status = 'EXPIRED', s.version = s.version + 1 WHERE s.id IN :ids")
+    int expireByIds(@Param("ids") List<Long> ids);
+
+    /**
+     * A bounded page of ACTIVE subscriptions that are past their end date — loaded (with
+     * user/plan/tier) so the service can write an EXPIRED event per row. Paged so the expiry
+     * job never loads an unbounded set into memory.
+     */
+    @Query("SELECT s FROM Subscription s JOIN FETCH s.user JOIN FETCH s.plan p JOIN FETCH p.tier " +
+           "WHERE s.status = 'ACTIVE' AND s.endDate < :now ORDER BY s.id")
+    List<Subscription> findExpiredActive(@Param("now") LocalDateTime now, Pageable pageable);
 
     // ─── DB-level aggregates for health / analytics — avoids loading all rows ──
 

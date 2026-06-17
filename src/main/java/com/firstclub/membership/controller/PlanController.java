@@ -1,5 +1,6 @@
 package com.firstclub.membership.controller;
 
+import com.firstclub.membership.dto.CreatePlanRequest;
 import com.firstclub.membership.dto.MembershipPlanDTO;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.exception.MembershipException;
@@ -9,7 +10,9 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -96,6 +99,26 @@ public class PlanController {
                     .orElseThrow(() -> MembershipException.planNotFound(id)))
             .toList();
         return ResponseEntity.ok(plans);
+    }
+
+    @PostMapping
+    @Operation(summary = "Create a plan (admin)")
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Plan created"),
+        @ApiResponse(responseCode = "404", description = "Tier not found")
+    })
+    public ResponseEntity<MembershipPlanDTO> createPlan(@Valid @RequestBody CreatePlanRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(planService.createPlan(request));
+    }
+
+    @PutMapping("/{id}/deactivate")
+    @Operation(summary = "Deactivate a plan (admin)")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Plan deactivated"),
+        @ApiResponse(responseCode = "404", description = "Plan not found")
+    })
+    public ResponseEntity<MembershipPlanDTO> deactivatePlan(@PathVariable Long id) {
+        return ResponseEntity.ok(planService.deactivatePlan(id));
     }
 
     @GetMapping("/recommendations")

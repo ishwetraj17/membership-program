@@ -12,6 +12,7 @@ public interface SubscriptionService {
 
     // ─── Lifecycle ────────────────────────────────────────────
     SubscriptionDTO createSubscription(SubscriptionRequestDTO request);
+    SubscriptionDTO createSubscription(SubscriptionRequestDTO request, String idempotencyKey);
     SubscriptionDTO updateSubscription(Long subscriptionId, SubscriptionUpdateDTO updateDTO);
     SubscriptionDTO cancelSubscription(Long subscriptionId, String reason);
     SubscriptionDTO renewSubscription(Long subscriptionId);
@@ -20,9 +21,10 @@ public interface SubscriptionService {
 
     // ─── Queries ──────────────────────────────────────────────
     Optional<SubscriptionDTO> getActiveSubscription(Long userId);
-    List<SubscriptionDTO> getUserSubscriptions(Long userId);
+    Page<SubscriptionDTO> getUserSubscriptions(Long userId, Pageable pageable);
     Page<SubscriptionDTO> getAllSubscriptions(Pageable pageable);
     boolean subscriptionBelongsToUser(Long subscriptionId, Long userId);
+    List<SubscriptionEventDTO> getSubscriptionEvents(Long subscriptionId);
 
     // ─── Background jobs ──────────────────────────────────────
     void processExpiredSubscriptions();

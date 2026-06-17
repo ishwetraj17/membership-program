@@ -1,0 +1,17 @@
+# Activate with: SPRING_PROFILES_ACTIVE=prod,redis (or dev,redis)
+# Switches plan/tier caching from in-process Caffeine to a shared Redis cache so all
+# application instances see the same cache — the single-node → distributed migration path.
+spring:
+  cache:
+    type: redis
+    redis:
+      time-to-live: 600000   # 10 minutes, matching the Caffeine TTL
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+management:
+  health:
+    redis:
+      enabled: true

@@ -3,6 +3,7 @@ package com.firstclub.membership.controller;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.security.AccessGuard;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.PlanService;
 import com.firstclub.membership.service.SubscriptionService;
@@ -16,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,6 +38,7 @@ public class MembershipController {
     private final MembershipService membershipService;
     private final PlanService planService;
     private final SubscriptionService subscriptionService;
+    private final AccessGuard accessGuard;
 
     // ─── Plans ────────────────────────────────────────────────────────────────
 
@@ -108,6 +111,48 @@ public class MembershipController {
                 .orElseThrow(() -> MembershipException.tierNotFound("ID: " + id)));
     }
 
+    // ─── Configurable benefits ──────────────────────────────────────────────────
+
+    @GetMapping("/benefits")
+    @Operation(summary = "Get the configurable benefit catalog")
+    public ResponseEntity<List<BenefitDTO>> getBenefitCatalog() {
+        return ResponseEntity.ok(membershipService.getBenefitCatalog());
+    }
+
+    @PostMapping("/benefits")
+    @Operation(summary = "Create a benefit in the catalog (admin)")
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Benefit created"),
+        @ApiResponse(responseCode = "409", description = "Benefit code already exists")
+    })
+    public ResponseEntity<BenefitDTO> createBenefit(@RequestBody BenefitDTO request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(membershipService.createBenefit(request));
+    }
+
+    @DeleteMapping("/tiers/{name}/benefits/{code}")
+    @Operation(summary = "Detach a benefit from a tier (admin)")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Benefit detached"),
+        @ApiResponse(responseCode = "404", description = "Tier or attachment not found")
+    })
+    public ResponseEntity<TierDTO> removeBenefit(@PathVariable String name, @PathVariable String code) {
+        return ResponseEntity.ok(membershipService.removeBenefitFromTier(name, code));
+    }
+
+    @PostMapping("/tiers/{name}/benefits")
+    @Operation(summary = "Attach or update a benefit on a tier (admin)",
+            description = "Demonstrates runtime configurability — adds a perk to a tier without code changes; evicts the tier cache.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Benefit attached"),
+        @ApiResponse(responseCode = "404", description = "Tier or benefit not found")
+    })
+    public ResponseEntity<TierDTO> assignBenefit(
+            @PathVariable String name,
+            @Valid @RequestBody AssignBenefitRequest request) {
+        return ResponseEntity.ok(
+                membershipService.assignBenefitToTier(name, request.getBenefitCode(), request.getValue()));
+    }
+
     // ─── Subscriptions ────────────────────────────────────────────────────────
 
     @PostMapping("/subscriptions")
@@ -117,8 +162,13 @@ public class MembershipController {
         @ApiResponse(responseCode = "400", description = "Invalid request"),
         @ApiResponse(responseCode = "409", description = "User already has active subscription")
     })
-    public ResponseEntity<SubscriptionDTO> createSubscription(@Valid @RequestBody SubscriptionRequestDTO request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
+    public ResponseEntity<SubscriptionDTO> createSubscription(
+            @Valid @RequestBody SubscriptionRequestDTO request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        // A USER may only create a subscription for themselves; ADMIN for anyone.
+        accessGuard.requireSelfOrAdmin(request.getUserId());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(subscriptionService.createSubscription(request, idempotencyKey));
     }
 
     @GetMapping("/subscriptions")
@@ -129,9 +179,12 @@ public class MembershipController {
     }
 
     @GetMapping("/subscriptions/user/{userId}")
-    @Operation(summary = "Get all subscriptions for a user")
-    public ResponseEntity<List<SubscriptionDTO>> getUserSubscriptions(@PathVariable Long userId) {
-        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId));
+    @Operation(summary = "Get all subscriptions for a user (paginated)")
+    public ResponseEntity<Page<SubscriptionDTO>> getUserSubscriptions(
+            @PathVariable Long userId,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        accessGuard.requireSelfOrAdmin(userId);
+        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId, pageable));
     }
 
     @GetMapping("/subscriptions/user/{userId}/active")
@@ -141,6 +194,7 @@ public class MembershipController {
         @ApiResponse(responseCode = "404", description = "No active subscription")
     })
     public ResponseEntity<SubscriptionDTO> getActiveSubscription(@PathVariable Long userId) {
+        accessGuard.requireSelfOrAdmin(userId);
         return ResponseEntity.ok(subscriptionService.getActiveSubscription(userId)
                 .orElseThrow(() -> new MembershipException(
                         "No active subscription for user " + userId,
@@ -153,6 +207,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> updateSubscription(
             @PathVariable Long id,
             @Valid @RequestBody SubscriptionUpdateDTO updateDTO) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
         return ResponseEntity.ok(subscriptionService.updateSubscription(id, updateDTO));
     }
 
@@ -161,6 +216,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> cancelSubscription(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, String> body) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
         String reason = body != null ? body.getOrDefault("reason", "User requested cancellation")
                                      : "User requested cancellation";
         return ResponseEntity.ok(subscriptionService.cancelSubscription(id, reason));
@@ -169,7 +225,19 @@ public class MembershipController {
     @PutMapping("/subscriptions/{id}/renew")
     @Operation(summary = "Renew expired subscription")
     public ResponseEntity<SubscriptionDTO> renewSubscription(@PathVariable Long id) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
         return ResponseEntity.ok(subscriptionService.renewSubscription(id));
+    }
+
+    @GetMapping("/subscriptions/{id}/events")
+    @Operation(summary = "Get a subscription's event/billing history")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Event history retrieved"),
+        @ApiResponse(responseCode = "404", description = "Subscription not found")
+    })
+    public ResponseEntity<List<SubscriptionEventDTO>> getSubscriptionEvents(@PathVariable Long id) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
+        return ResponseEntity.ok(subscriptionService.getSubscriptionEvents(id));
     }
 
     @PutMapping("/subscriptions/{id}/upgrade")
@@ -177,6 +245,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> upgradeSubscription(
             @PathVariable Long id,
             @Valid @RequestBody UpgradeRequest request) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
         return ResponseEntity.ok(subscriptionService.upgradeSubscription(id, request.getNewPlanId()));
     }
 
@@ -185,6 +254,7 @@ public class MembershipController {
     public ResponseEntity<SubscriptionDTO> downgradeSubscription(
             @PathVariable Long id,
             @Valid @RequestBody UpgradeRequest request) {
+        accessGuard.requireSubscriptionOwnerOrAdmin(id);
         return ResponseEntity.ok(subscriptionService.downgradeSubscription(id, request.getNewPlanId()));
     }
 
@@ -225,7 +295,8 @@ public class MembershipController {
 
         Map<String, Object> analytics = new HashMap<>();
         analytics.put("revenue", Map.of(
-            "totalRevenue", stats.get("totalRevenue"),
+            "lifetimeRevenue", stats.get("lifetimeRevenue"),
+            "activeRecurringRevenue", stats.get("activeRecurringRevenue"),
             "currency", "INR",
             "averageRevenuePerUser", stats.get("averageRevenuePerUser")
         ));

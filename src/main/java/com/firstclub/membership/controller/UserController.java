@@ -3,6 +3,8 @@ package com.firstclub.membership.controller;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.User;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.security.AccessGuard;
+import com.firstclub.membership.service.EarnedTierService;
 import com.firstclub.membership.service.SubscriptionService;
 import com.firstclub.membership.service.TierEvaluationService;
 import com.firstclub.membership.service.UserService;
@@ -16,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +27,6 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.SmartValidator;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -37,6 +39,8 @@ public class UserController {
     private final UserService userService;
     private final SubscriptionService subscriptionService;
     private final TierEvaluationService tierEvaluationService;
+    private final EarnedTierService earnedTierService;
+    private final AccessGuard accessGuard;
     private final SmartValidator validator;
 
     // ─── User CRUD ────────────────────────────────────────────────────────────
@@ -58,6 +62,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> getUserById(@PathVariable Long id) {
+        accessGuard.requireSelfOrAdmin(id);
         return ResponseEntity.ok(userService.getUserById(id)
                 .orElseThrow(() -> MembershipException.userNotFound(id)));
     }
@@ -69,6 +74,7 @@ public class UserController {
         @ApiResponse(responseCode = "404", description = "User not found")
     })
     public ResponseEntity<UserDTO> getUserByEmail(@PathVariable String email) {
+        accessGuard.requireAdmin(); // email lookup is an admin/search operation
         return ResponseEntity.ok(userService.getUserByEmail(email)
                 .orElseThrow(() -> new MembershipException(
                         "User with email '" + email + "' not found",
@@ -89,6 +95,7 @@ public class UserController {
     @PutMapping("/{id}")
     @Operation(summary = "Update user (full replace)")
     public ResponseEntity<UserDTO> updateUser(@PathVariable Long id, @Valid @RequestBody UserDTO dto) {
+        accessGuard.requireSelfOrAdmin(id);
         return ResponseEntity.ok(userService.updateUser(id, dto));
     }
 
@@ -97,6 +104,7 @@ public class UserController {
     public ResponseEntity<UserDTO> partialUpdateUser(
             @PathVariable Long id,
             @RequestBody Map<String, Object> updates) throws BindException {
+        accessGuard.requireSelfOrAdmin(id);
 
         UserDTO current = userService.getUserById(id)
                 .orElseThrow(() -> MembershipException.userNotFound(id));
@@ -157,10 +165,12 @@ public class UserController {
     }
 
     @GetMapping("/{userId}/subscriptions")
-    @Operation(summary = "Get user's subscription history")
-    public ResponseEntity<List<SubscriptionDTO>> getUserSubscriptions(@PathVariable Long userId) {
+    @Operation(summary = "Get user's subscription history (paginated)")
+    public ResponseEntity<Page<SubscriptionDTO>> getUserSubscriptions(
+            @PathVariable Long userId,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         requireUser(userId);
-        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId));
+        return ResponseEntity.ok(subscriptionService.getUserSubscriptions(userId, pageable));
     }
 
     @PostMapping("/{userId}/subscriptions")
@@ -171,7 +181,8 @@ public class UserController {
     })
     public ResponseEntity<SubscriptionDTO> createSubscription(
             @PathVariable Long userId,
-            @RequestBody SubscriptionRequestDTO request) throws BindException {
+            @RequestBody SubscriptionRequestDTO request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) throws BindException {
         requireUser(userId);
         // Set userId from path before validation so @NotNull on userId passes
         request.setUserId(userId);
@@ -180,7 +191,8 @@ public class UserController {
         if (bindingResult.hasErrors()) {
             throw new BindException(bindingResult);
         }
-        return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.createSubscription(request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(subscriptionService.createSubscription(request, idempotencyKey));
     }
 
     @PutMapping("/{userId}/subscriptions/{subscriptionId}")
@@ -232,9 +244,36 @@ public class UserController {
         return ResponseEntity.ok(tierEvaluationService.evaluateEligibleTier(userId));
     }
 
+    @GetMapping("/{userId}/earned-tier")
+    @Operation(
+        summary = "Get the user's earned tier",
+        description = "The tier the user has earned through order activity (distinct from any purchased subscription tier). Computed on first read."
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Earned tier returned"),
+        @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    public ResponseEntity<UserTierAssignmentDTO> getEarnedTier(@PathVariable Long userId) {
+        requireUser(userId);
+        return ResponseEntity.ok(earnedTierService.getEarnedTier(userId)
+                .orElseThrow(() -> MembershipException.userNotFound(userId)));
+    }
+
+    @PostMapping("/{userId}/earned-tier/evaluate")
+    @Operation(
+        summary = "Re-evaluate the user's earned tier now",
+        description = "Forces an immediate re-evaluation and persists the new earned tier."
+    )
+    public ResponseEntity<UserTierAssignmentDTO> evaluateEarnedTier(@PathVariable Long userId) {
+        requireUser(userId);
+        return ResponseEntity.ok(earnedTierService.assignEarnedTier(userId));
+    }
+
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     private void requireUser(Long userId) {
+        // Ownership before existence so a caller can't probe other users' ids.
+        accessGuard.requireSelfOrAdmin(userId);
         userService.getUserById(userId)
                 .orElseThrow(() -> MembershipException.userNotFound(userId));
     }

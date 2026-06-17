@@ -19,6 +19,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        jdbc:
+          time_zone: UTC   # persist/read timestamps as UTC regardless of server zone
 
   flyway:
     enabled: true
@@ -35,6 +37,13 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful   # stop accepting new requests, let in-flight ones finish
+
+spring.lifecycle.timeout-per-shutdown-phase: 30s
+
+# Comma-separated allowed CORS origins (browser clients). Default: none cross-origin.
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
 management:
   endpoints:
@@ -44,6 +53,24 @@ management:
   endpoint:
     health:
       show-details: always
+      probes:
+        enabled: true   # exposes /actuator/health/liveness and /readiness
+  health:
+    # Redis is an optional cache backend (enabled only under the 'redis' profile),
+    # so its health probe is off by default to avoid a DOWN status without Redis.
+    redis:
+      enabled: false
+
+# Per-client API rate limiting (Bucket4j). Shared limits across nodes would use the
+# Bucket4j Redis backend; this single-node default is in-process.
+rate-limit:
+  capacity: 100
+  refill-period-seconds: 60
+
+# Transactional-outbox relay poll interval.
+outbox:
+  relay:
+    delay-ms: 10000
 
 springdoc:
   api-docs:

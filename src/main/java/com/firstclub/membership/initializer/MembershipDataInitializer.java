@@ -1,11 +1,17 @@
 package com.firstclub.membership.initializer;
 
 import com.firstclub.membership.config.MembershipConfig;
+import com.firstclub.membership.entity.Benefit;
+import com.firstclub.membership.entity.Coupon;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.MembershipTier;
+import com.firstclub.membership.entity.TierBenefit;
 import com.firstclub.membership.entity.TierEligibilityCriteria;
+import com.firstclub.membership.repository.BenefitRepository;
+import com.firstclub.membership.repository.CouponRepository;
 import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.MembershipTierRepository;
+import com.firstclub.membership.repository.TierBenefitRepository;
 import com.firstclub.membership.repository.TierEligibilityCriteriaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +22,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +42,9 @@ public class MembershipDataInitializer implements ApplicationRunner {
     private final MembershipTierRepository tierRepository;
     private final MembershipPlanRepository planRepository;
     private final TierEligibilityCriteriaRepository criteriaRepository;
+    private final BenefitRepository benefitRepository;
+    private final TierBenefitRepository tierBenefitRepository;
+    private final CouponRepository couponRepository;
     private final MembershipConfig membershipConfig;
 
     // Eligibility thresholds for GOLD and PLATINUM.
@@ -59,15 +69,67 @@ public class MembershipDataInitializer implements ApplicationRunner {
 
         log.info("Initialising membership tiers and plans from configuration...");
 
+        Map<String, Benefit> catalog = seedBenefitCatalog();
+
         membershipConfig.getTiers().forEach((key, cfg) -> {
             MembershipTier tier = buildTier(key.toUpperCase(), cfg);
             MembershipTier saved = tierRepository.save(tier);
             createPlansForTier(saved, cfg.getBasePrice());
             createEligibilityCriteria(saved);
+            attachBenefits(saved, cfg, catalog);
             log.info("Created tier '{}' (level {}) — base price: {}", saved.getName(), saved.getLevel(), cfg.getBasePrice());
         });
 
+        seedDemoCoupon();
+
         log.info("Membership initialisation complete — {} tiers created.", membershipConfig.getTiers().size());
+    }
+
+    /** Seeds a demo coupon so the redemption flow works out of the box. */
+    private void seedDemoCoupon() {
+        if (couponRepository.existsByCode("WELCOME10")) return;
+        couponRepository.save(Coupon.builder()
+                .code("WELCOME10")
+                .description("10% off your order — one per member")
+                .discountType(Coupon.DiscountType.PERCENT)
+                .discountValue(new BigDecimal("10"))
+                .perUserLimit(1)
+                .active(true)
+                .build());
+        log.info("Seeded demo coupon WELCOME10");
+    }
+
+    /** Seeds the canonical, configurable benefit catalog (once). */
+    private Map<String, Benefit> seedBenefitCatalog() {
+        Map<String, Benefit> catalog = new LinkedHashMap<>();
+        catalog.put("EXTRA_DISCOUNT", benefit("EXTRA_DISCOUNT", "Extra discount", "Additional discount on eligible items", Benefit.Category.DISCOUNT));
+        catalog.put("FREE_DELIVERY", benefit("FREE_DELIVERY", "Free delivery", "Free delivery on eligible orders", Benefit.Category.DELIVERY));
+        catalog.put("FAST_DELIVERY", benefit("FAST_DELIVERY", "Fast delivery", "Reduced delivery SLA", Benefit.Category.DELIVERY));
+        catalog.put("EXCLUSIVE_DEALS", benefit("EXCLUSIVE_DEALS", "Exclusive deals", "Access to members-only deals", Benefit.Category.ACCESS));
+        catalog.put("EARLY_ACCESS", benefit("EARLY_ACCESS", "Early sale access", "Early access to sales and drops", Benefit.Category.ACCESS));
+        catalog.put("PRIORITY_SUPPORT", benefit("PRIORITY_SUPPORT", "Priority support", "Priority customer support queue", Benefit.Category.SUPPORT));
+        catalog.put("MONTHLY_COUPONS", benefit("MONTHLY_COUPONS", "Monthly coupons", "Coupons granted each month", Benefit.Category.REWARDS));
+        return catalog;
+    }
+
+    private Benefit benefit(String code, String name, String description, Benefit.Category category) {
+        return benefitRepository.save(Benefit.builder()
+                .code(code).name(name).description(description).category(category).build());
+    }
+
+    /** Attaches the configured benefits to a tier based on its feature flags and values. */
+    private void attachBenefits(MembershipTier tier, MembershipConfig.TierConfig cfg, Map<String, Benefit> catalog) {
+        link(tier, catalog.get("EXTRA_DISCOUNT"), cfg.getDiscountPercentage().stripTrailingZeros().toPlainString() + "%");
+        if (cfg.isFreeDelivery()) link(tier, catalog.get("FREE_DELIVERY"), null);
+        link(tier, catalog.get("FAST_DELIVERY"), cfg.getDeliveryDays() + "-day SLA");
+        if (cfg.isExclusiveDeals()) link(tier, catalog.get("EXCLUSIVE_DEALS"), null);
+        if (cfg.isEarlyAccess()) link(tier, catalog.get("EARLY_ACCESS"), null);
+        if (cfg.isPrioritySupport()) link(tier, catalog.get("PRIORITY_SUPPORT"), null);
+        link(tier, catalog.get("MONTHLY_COUPONS"), cfg.getMaxCouponsPerMonth() + "/month");
+    }
+
+    private void link(MembershipTier tier, Benefit benefit, String value) {
+        tierBenefitRepository.save(TierBenefit.builder().tier(tier).benefit(benefit).value(value).build());
     }
 
     private MembershipTier buildTier(String name, MembershipConfig.TierConfig cfg) {

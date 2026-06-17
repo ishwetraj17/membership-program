@@ -26,5 +26,8 @@ public class TierDTO {
     private Integer maxCouponsPerMonth;
     private Integer deliveryDays;
     private String additionalBenefits;
+    /** Human-readable benefit summary derived from the tier's feature flags. */
     private List<String> benefits;
+    /** Configurable benefit catalog entries attached to this tier (entity-backed). */
+    private List<BenefitDTO> configuredBenefits;
 }

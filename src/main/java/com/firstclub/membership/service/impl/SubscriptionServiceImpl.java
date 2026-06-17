@@ -1,23 +1,39 @@
 package com.firstclub.membership.service.impl;
 
+import com.firstclub.membership.config.MembershipConfig;
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.*;
+import com.firstclub.membership.entity.IdempotencyRecord;
+import com.firstclub.membership.entity.SubscriptionEvent;
+import com.firstclub.membership.event.OutboxEventService;
+import com.firstclub.membership.event.SubscriptionDomainEvent;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.repository.IdempotencyRecordRepository;
 import com.firstclub.membership.repository.MembershipPlanRepository;
+import com.firstclub.membership.repository.SubscriptionEventRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
+import com.firstclub.membership.service.PaymentGateway;
 import com.firstclub.membership.service.SubscriptionService;
+import com.firstclub.membership.service.TierEvaluationService;
 import com.firstclub.membership.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.function.Supplier;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashMap;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -35,42 +51,170 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     private final MembershipPlanRepository planRepository;
     private final UserService userService;
     private final SubscriptionRenewalProcessor renewalProcessor;
+    private final SubscriptionEventRepository eventRepository;
+    private final IdempotencyRecordRepository idempotencyRepository;
+    private final OutboxEventService outboxEventService;
+    private final TierEvaluationService tierEvaluationService;
+    private final PaymentGateway paymentGateway;
+    private final MembershipConfig membershipConfig;
+    private final PlatformTransactionManager txManager;
+    private final Clock clock;
+
+    private LocalDateTime now() {
+        return LocalDateTime.now(clock);
+    }
+
+    /**
+     * Append an immutable billing/audit event AND a transactional-outbox domain event for a
+     * subscription change — both in the caller's transaction, so they commit atomically with it.
+     */
+    private void recordEvent(Subscription s, SubscriptionEvent.EventType type, BigDecimal amount, String paymentReference) {
+        BigDecimal value = amount != null ? amount : BigDecimal.ZERO;
+        LocalDateTime occurredAt = now();
+        eventRepository.save(SubscriptionEvent.builder()
+                .subscriptionId(s.getId())
+                .userId(s.getUser().getId())
+                .eventType(type)
+                .amount(value)
+                .planId(s.getPlan().getId())
+                .tierName(s.getPlan().getTier().getName())
+                .paymentReference(paymentReference)
+                .occurredAt(occurredAt)
+                .build());
+        outboxEventService.publish(SubscriptionEvent.AGGREGATE, s.getId(), type.name(),
+                new SubscriptionDomainEvent(type.name(), s.getId(), s.getUser().getId(),
+                        s.getPlan().getId(), s.getPlan().getTier().getName(), value, occurredAt));
+    }
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
 
     @Override
     public SubscriptionDTO createSubscription(SubscriptionRequestDTO request) {
+        return createSubscription(request, null);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public SubscriptionDTO createSubscription(SubscriptionRequestDTO request, String idempotencyKey) {
+        boolean idempotent = idempotencyKey != null && !idempotencyKey.isBlank();
+        if (idempotent) {
+            Optional<IdempotencyRecord> prior = idempotencyRepository.findByIdempotencyKey(idempotencyKey);
+            if (prior.isPresent()) {
+                IdempotencyRecord rec = prior.get();
+                if (!rec.getRequestHash().equals(requestHash(request))) {
+                    throw new MembershipException(
+                            "Idempotency-Key already used with a different request",
+                            "IDEMPOTENCY_KEY_CONFLICT", HttpStatus.CONFLICT);
+                }
+                log.info("Replaying idempotent subscription create — key={}", idempotencyKey);
+                return inTx(() -> convertToDTO(findById(rec.getTargetId())));
+            }
+        }
+
         log.info("Creating subscription — userId={} planId={}", request.getUserId(), request.getPlanId());
 
+        // Payment saga: reserve a PENDING subscription (committed) → charge OUTSIDE any DB
+        // transaction → activate on success, or compensate (cancel + refund) on failure. This
+        // avoids holding a DB transaction across the payment call and the "charged but not
+        // recorded" hazard of charging inline.
+        Subscription pending = inTx(() -> createPending(request, idempotencyKey, idempotent));
+        Long pendingId = pending.getId();
+
+        PaymentGateway.PaymentResult payment;
+        try {
+            payment = paymentGateway.charge(pending.getUser().getId(), pending.getPaidAmount(),
+                    "CREATE " + pending.getPlan().getName());
+        } catch (RuntimeException e) {
+            finalizeFailed(pendingId, "Payment error", null);
+            throw new MembershipException("Payment failed — please retry", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
+        }
+        if (!payment.success()) {
+            finalizeFailed(pendingId, "Payment declined", null);
+            throw new MembershipException("Payment declined", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
+        }
+
+        try {
+            return inTx(() -> activate(pendingId, payment.reference()));
+        } catch (RuntimeException e) {
+            // e.g. the partial unique index rejected a concurrent activation — compensate + refund.
+            finalizeFailed(pendingId, "Activation failed", payment.reference());
+            throw e;
+        }
+    }
+
+    /** Phase 1 — validate and persist a PENDING subscription (its own transaction). */
+    private Subscription createPending(SubscriptionRequestDTO request, String idempotencyKey, boolean idempotent) {
         User user = userService.findUserEntityById(request.getUserId());
         MembershipPlan plan = planRepository.findById(request.getPlanId())
                 .orElseThrow(() -> MembershipException.planNotFound(request.getPlanId()));
-
         if (!plan.getIsActive()) {
             throw MembershipException.inactivePlan(plan.getId());
         }
-
-        // Application-level guard — the DB partial unique index is the hard safety net
-        if (subscriptionRepository.findActiveSubscriptionByUser(user, LocalDateTime.now()).isPresent()) {
+        LocalDateTime now = now();
+        if (subscriptionRepository.findActiveSubscriptionByUser(user, now).isPresent()) {
             throw MembershipException.userAlreadySubscribed(user.getId());
         }
-
-        LocalDateTime now = LocalDateTime.now();
+        if (membershipConfig.isEnforceTierEligibility()
+                && !tierEvaluationService.isEligibleForTier(user.getId(), plan.getTier().getName())) {
+            throw new MembershipException(
+                    "User " + user.getId() + " is not eligible for the " + plan.getTier().getName() + " tier",
+                    "TIER_NOT_ELIGIBLE", HttpStatus.FORBIDDEN);
+        }
         LocalDateTime endDate = now.plusMonths(plan.getDurationInMonths());
-
-        Subscription saved = subscriptionRepository.save(Subscription.builder()
-                .user(user)
-                .plan(plan)
-                .status(Subscription.SubscriptionStatus.ACTIVE)
-                .startDate(now)
-                .endDate(endDate)
-                .nextBillingDate(endDate)
+        Subscription pending = subscriptionRepository.save(Subscription.builder()
+                .user(user).plan(plan)
+                .status(Subscription.SubscriptionStatus.PENDING)
+                .startDate(now).endDate(endDate).nextBillingDate(endDate)
                 .paidAmount(plan.getPrice())
                 .autoRenewal(request.getAutoRenewal())
                 .build());
+        if (idempotent) {
+            idempotencyRepository.save(IdempotencyRecord.builder()
+                    .idempotencyKey(idempotencyKey)
+                    .requestHash(requestHash(request))
+                    .targetType("SUBSCRIPTION")
+                    .targetId(pending.getId())
+                    .build());
+        }
+        return pending;
+    }
 
-        log.info("Subscription created — id={}", saved.getId());
-        return convertToDTO(saved);
+    /** Phase 3a — activate after a successful charge (its own transaction). */
+    private SubscriptionDTO activate(Long pendingId, String paymentReference) {
+        Subscription sub = findById(pendingId);
+        sub.setStatus(Subscription.SubscriptionStatus.ACTIVE);
+        Subscription active = subscriptionRepository.save(sub);
+        recordEvent(active, SubscriptionEvent.EventType.CREATED, active.getPaidAmount(), paymentReference);
+        log.info("Subscription created — id={}", active.getId());
+        return convertToDTO(active);
+    }
+
+    /** Phase 3b — compensation: mark the pending subscription failed and refund if already charged. */
+    private void finalizeFailed(Long pendingId, String reason, String paymentReference) {
+        inTx(() -> {
+            Subscription sub = findById(pendingId);
+            if (paymentReference != null) {
+                paymentGateway.refund(paymentReference, sub.getPaidAmount());
+            }
+            sub.setStatus(Subscription.SubscriptionStatus.CANCELLED);
+            sub.setCancelledAt(now());
+            sub.setCancellationReason(reason);
+            sub.setAutoRenewal(false);
+            subscriptionRepository.save(sub);
+            return null;
+        });
+        log.warn("Subscription {} not activated — {}", pendingId, reason);
+    }
+
+    /** Runs work in its own (REQUIRES_NEW) transaction, so the orchestration can sit outside any tx. */
+    private <T> T inTx(Supplier<T> work) {
+        TransactionTemplate template = new TransactionTemplate(txManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template.execute(status -> work.get());
+    }
+
+    private String requestHash(SubscriptionRequestDTO request) {
+        return request.getUserId() + ":" + request.getPlanId() + ":" + request.getAutoRenewal();
     }
 
     @Override
@@ -85,22 +229,12 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             changed = true;
         }
 
-        if (updateDTO.getNewPlanId() != null) {
-            MembershipPlan newPlan = planRepository.findById(updateDTO.getNewPlanId())
-                    .orElseThrow(() -> MembershipException.planNotFound(updateDTO.getNewPlanId()));
-            if (!newPlan.getIsActive()) throw MembershipException.inactivePlan(newPlan.getId());
+        // Plan changes are NOT handled here: tier/duration direction, pro-ration and date
+        // anchoring differ between upgrade and downgrade. Routing both through one generic
+        // setter produced inconsistent results, so plan changes go through the dedicated
+        // upgrade / downgrade endpoints only.
 
-            if (!newPlan.getId().equals(subscription.getPlan().getId())) {
-                BigDecimal proRated = calculateProRated(subscription, subscription.getPlan(), newPlan);
-                subscription.setPlan(newPlan);
-                subscription.setEndDate(subscription.getStartDate().plusMonths(newPlan.getDurationInMonths()));
-                subscription.setNextBillingDate(subscription.getEndDate());
-                subscription.setPaidAmount(subscription.getPaidAmount().add(proRated));
-                changed = true;
-                log.info("Plan changed on subscription {} — pro-rated adjustment: {}", subscriptionId, proRated);
-            }
-        }
-
+        boolean cancelledViaUpdate = false;
         if (updateDTO.getStatus() != null && updateDTO.getStatus() != subscription.getStatus()) {
             if (!isValidTransition(subscription.getStatus(), updateDTO.getStatus())) {
                 throw new MembershipException(
@@ -109,15 +243,25 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             }
             subscription.setStatus(updateDTO.getStatus());
             if (updateDTO.getStatus() == Subscription.SubscriptionStatus.CANCELLED) {
-                subscription.setCancelledAt(LocalDateTime.now());
+                subscription.setCancelledAt(now());
                 subscription.setCancellationReason(
                         updateDTO.getReason() != null ? updateDTO.getReason() : "Updated via API");
                 subscription.setAutoRenewal(false);
+                cancelledViaUpdate = true;
             }
             changed = true;
         }
 
-        return changed ? convertToDTO(subscriptionRepository.save(subscription)) : convertToDTO(subscription);
+        if (!changed) {
+            return convertToDTO(subscription);
+        }
+        Subscription saved = subscriptionRepository.save(subscription);
+        // Cancelling through the generic update must leave the same audit/outbox trail as the
+        // dedicated cancel endpoint.
+        if (cancelledViaUpdate) {
+            recordEvent(saved, SubscriptionEvent.EventType.CANCELLED, BigDecimal.ZERO, null);
+        }
+        return convertToDTO(saved);
     }
 
     @Override
@@ -129,43 +273,102 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             throw MembershipException.invalidSubscriptionStatus("cancel");
         }
 
+        BigDecimal refund = membershipConfig.isRefundOnCancel()
+                ? proratedRefund(subscription) : BigDecimal.ZERO;
+
         subscription.setStatus(Subscription.SubscriptionStatus.CANCELLED);
-        subscription.setCancelledAt(LocalDateTime.now());
+        subscription.setCancelledAt(now());
         subscription.setCancellationReason(reason);
         subscription.setAutoRenewal(false);
 
-        return convertToDTO(subscriptionRepository.save(subscription));
+        Subscription cancelled = subscriptionRepository.save(subscription);
+        recordEvent(cancelled, SubscriptionEvent.EventType.CANCELLED, BigDecimal.ZERO, null);
+
+        if (refund.signum() > 0) {
+            String originalReference = eventRepository
+                    .findFirstBySubscriptionIdAndPaymentReferenceIsNotNullOrderByOccurredAtDesc(cancelled.getId())
+                    .map(SubscriptionEvent::getPaymentReference)
+                    .orElse(null);
+            String refundReference = paymentGateway.refund(originalReference, refund).reference();
+            // Stored negative so lifetime revenue nets out the refund.
+            recordEvent(cancelled, SubscriptionEvent.EventType.REFUNDED, refund.negate(), refundReference);
+            log.info("Refunded {} on cancellation of subscription {}", refund, cancelled.getId());
+        }
+        return convertToDTO(cancelled);
+    }
+
+    /** Unused (pro-rated) portion of the current period's paid amount. */
+    private BigDecimal proratedRefund(Subscription s) {
+        long totalDays = ChronoUnit.DAYS.between(s.getStartDate(), s.getEndDate());
+        long remainingDays = ChronoUnit.DAYS.between(now(), s.getEndDate());
+        if (totalDays <= 0 || remainingDays <= 0) return BigDecimal.ZERO;
+        return s.getPaidAmount()
+                .multiply(BigDecimal.valueOf(remainingDays))
+                .divide(BigDecimal.valueOf(totalDays), 2, RoundingMode.HALF_UP);
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public SubscriptionDTO renewSubscription(Long subscriptionId) {
         log.info("Renewing subscription {}", subscriptionId);
 
-        Subscription subscription = findById(subscriptionId);
-        if (subscription.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
+        // Same saga shape as create: validate (read) → charge OUTSIDE the tx → apply / refund.
+        ChargeContext ctx = inTx(() -> {
+            Subscription s = findById(subscriptionId);
+            if (s.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
+                throw new MembershipException("Only expired subscriptions can be renewed", "INVALID_SUBSCRIPTION_STATUS");
+            }
+            return new ChargeContext(s.getUser().getId(), s.getPlan().getPrice(), s.getPlan().getName());
+        });
+
+        String ref = chargeOrThrow(ctx, "RENEWED ");
+        try {
+            return inTx(() -> applyRenewal(subscriptionId, ref));
+        } catch (RuntimeException e) {
+            refundIfCharged(ref, ctx.amount());
+            throw e;
+        }
+    }
+
+    private SubscriptionDTO applyRenewal(Long subscriptionId, String paymentReference) {
+        Subscription s = findById(subscriptionId);
+        if (s.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
             throw new MembershipException("Only expired subscriptions can be renewed", "INVALID_SUBSCRIPTION_STATUS");
         }
-
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime newEnd = now.plusMonths(subscription.getPlan().getDurationInMonths());
-        subscription.setStatus(Subscription.SubscriptionStatus.ACTIVE);
-        subscription.setStartDate(now);
-        subscription.setEndDate(newEnd);
-        subscription.setNextBillingDate(newEnd);
-        subscription.setPaidAmount(subscription.getPlan().getPrice()); // new billing period = new payment
-
-        return convertToDTO(subscriptionRepository.save(subscription));
+        LocalDateTime now = now();
+        LocalDateTime newEnd = now.plusMonths(s.getPlan().getDurationInMonths());
+        s.setStatus(Subscription.SubscriptionStatus.ACTIVE);
+        s.setStartDate(now);
+        s.setEndDate(newEnd);
+        s.setNextBillingDate(newEnd);
+        s.setPaidAmount(s.getPlan().getPrice());
+        Subscription renewed = subscriptionRepository.save(s);
+        recordEvent(renewed, SubscriptionEvent.EventType.RENEWED, renewed.getPaidAmount(), paymentReference);
+        return convertToDTO(renewed);
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public SubscriptionDTO upgradeSubscription(Long subscriptionId, Long newPlanId) {
         log.info("Upgrading subscription {} to plan {}", subscriptionId, newPlanId);
 
+        UpgradeContext ctx = inTx(() -> validateUpgrade(subscriptionId, newPlanId));
+
+        String ref = chargeOrThrow(new ChargeContext(ctx.userId(), ctx.charge(), ctx.newPlanName()), "UPGRADE ");
+        try {
+            return inTx(() -> applyUpgrade(subscriptionId, newPlanId, ctx.charge(), ref));
+        } catch (RuntimeException e) {
+            refundIfCharged(ref, ctx.charge());
+            throw e;
+        }
+    }
+
+    /** Validates an upgrade and computes the pro-rated charge — no mutation. */
+    private UpgradeContext validateUpgrade(Long subscriptionId, Long newPlanId) {
         Subscription subscription = findById(subscriptionId);
         if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
             throw new MembershipException("Cannot upgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
         }
-
         MembershipPlan newPlan = planRepository.findById(newPlanId)
                 .orElseThrow(() -> MembershipException.planNotFound(newPlanId));
         MembershipPlan currentPlan = subscription.getPlan();
@@ -173,20 +376,60 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         boolean higherTier = newPlan.getTier().getLevel() > currentPlan.getTier().getLevel();
         boolean longerDuration = newPlan.getTier().getLevel().equals(currentPlan.getTier().getLevel())
                 && newPlan.getDurationInMonths() > currentPlan.getDurationInMonths();
-
         if (!higherTier && !longerDuration) {
             throw MembershipException.invalidPlanTransition(currentPlan.getName(), newPlan.getName());
         }
-
-        // Pro-ration is based on the current period — compute it before the period is extended.
-        BigDecimal proRated = calculateProRated(subscription, currentPlan, newPlan);
-        subscription.setPlan(newPlan);
-        subscription.setEndDate(subscription.getStartDate().plusMonths(newPlan.getDurationInMonths()));
-        subscription.setNextBillingDate(subscription.getEndDate());
-        subscription.setPaidAmount(subscription.getPaidAmount().add(proRated));
-
-        return convertToDTO(subscriptionRepository.save(subscription));
+        BigDecimal charge = calculateUpgradeCharge(subscription, currentPlan, newPlan, now());
+        return new UpgradeContext(subscription.getUser().getId(), charge, newPlan.getName());
     }
+
+    /** Applies the validated upgrade after a successful charge. */
+    private SubscriptionDTO applyUpgrade(Long subscriptionId, Long newPlanId, BigDecimal charge, String paymentReference) {
+        Subscription subscription = findById(subscriptionId);
+        if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
+            throw new MembershipException("Cannot upgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
+        }
+        MembershipPlan newPlan = planRepository.findById(newPlanId)
+                .orElseThrow(() -> MembershipException.planNotFound(newPlanId));
+        LocalDateTime now = now();
+        // New plan starts a fresh full term from now; anchoring endDate to now never shortens it.
+        subscription.setPlan(newPlan);
+        subscription.setStartDate(now);
+        LocalDateTime newEnd = now.plusMonths(newPlan.getDurationInMonths());
+        subscription.setEndDate(newEnd);
+        subscription.setNextBillingDate(newEnd);
+        subscription.setPaidAmount(subscription.getPaidAmount().add(charge));
+        Subscription upgraded = subscriptionRepository.save(subscription);
+        recordEvent(upgraded, SubscriptionEvent.EventType.UPGRADED, charge, paymentReference);
+        log.info("Upgraded subscription {} — pro-rated charge: {}", subscriptionId, charge);
+        return convertToDTO(upgraded);
+    }
+
+    /** Charges the member outside any transaction (skipping a zero charge); returns the reference or null. */
+    private String chargeOrThrow(ChargeContext ctx, String descriptionPrefix) {
+        if (ctx.amount() == null || ctx.amount().signum() <= 0) {
+            return null;
+        }
+        PaymentGateway.PaymentResult payment;
+        try {
+            payment = paymentGateway.charge(ctx.userId(), ctx.amount(), descriptionPrefix + ctx.planName());
+        } catch (RuntimeException e) {
+            throw new MembershipException("Payment failed — please retry", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
+        }
+        if (!payment.success()) {
+            throw new MembershipException("Payment declined", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
+        }
+        return payment.reference();
+    }
+
+    private void refundIfCharged(String reference, BigDecimal amount) {
+        if (reference != null) {
+            paymentGateway.refund(reference, amount);
+        }
+    }
+
+    private record ChargeContext(Long userId, BigDecimal amount, String planName) {}
+    private record UpgradeContext(Long userId, BigDecimal charge, String newPlanName) {}
 
     @Override
     public SubscriptionDTO downgradeSubscription(Long subscriptionId, Long newPlanId) {
@@ -204,13 +447,17 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             throw MembershipException.invalidPlanTransition(subscription.getPlan().getName(), newPlan.getName());
         }
 
+        // Takes effect immediately: the lower-tier plan starts now for its full duration.
+        // No refund is issued for the unused portion of the higher tier (deliberate policy).
         subscription.setPlan(newPlan);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = now();
         subscription.setStartDate(now);
         LocalDateTime newEnd = now.plusMonths(newPlan.getDurationInMonths());
         subscription.setEndDate(newEnd);
         subscription.setNextBillingDate(newEnd);
-        return convertToDTO(subscriptionRepository.save(subscription));
+        Subscription downgraded = subscriptionRepository.save(subscription);
+        recordEvent(downgraded, SubscriptionEvent.EventType.DOWNGRADED, BigDecimal.ZERO, null);
+        return convertToDTO(downgraded);
     }
 
     // ─── Queries ──────────────────────────────────────────────────────────────
@@ -219,17 +466,15 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     @Transactional(readOnly = true)
     public Optional<SubscriptionDTO> getActiveSubscription(Long userId) {
         User user = userService.findUserEntityById(userId);
-        return subscriptionRepository.findActiveSubscriptionByUser(user, LocalDateTime.now())
+        return subscriptionRepository.findActiveSubscriptionByUser(user, now())
                 .map(this::convertToDTO);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<SubscriptionDTO> getUserSubscriptions(Long userId) {
+    public Page<SubscriptionDTO> getUserSubscriptions(Long userId, Pageable pageable) {
         User user = userService.findUserEntityById(userId);
-        return subscriptionRepository.findByUserOrderByCreatedAtDesc(user).stream()
-                .map(this::convertToDTO)
-                .collect(Collectors.toList());
+        return subscriptionRepository.findByUser(user, pageable).map(this::convertToDTO);
     }
 
     @Override
@@ -244,13 +489,48 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         return subscriptionRepository.existsByIdAndUserId(subscriptionId, userId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<SubscriptionEventDTO> getSubscriptionEvents(Long subscriptionId) {
+        if (!subscriptionRepository.existsById(subscriptionId)) {
+            throw MembershipException.subscriptionNotFound(subscriptionId);
+        }
+        return eventRepository.findBySubscriptionIdOrderByOccurredAtAsc(subscriptionId).stream()
+                .map(e -> SubscriptionEventDTO.builder()
+                        .id(e.getId())
+                        .subscriptionId(e.getSubscriptionId())
+                        .userId(e.getUserId())
+                        .eventType(e.getEventType())
+                        .amount(e.getAmount())
+                        .planId(e.getPlanId())
+                        .tierName(e.getTierName())
+                        .paymentReference(e.getPaymentReference())
+                        .occurredAt(e.getOccurredAt())
+                        .build())
+                .toList();
+    }
+
     // ─── Background jobs ──────────────────────────────────────────────────────
 
     @Override
     public void processExpiredSubscriptions() {
-        int count = subscriptionRepository.bulkExpireSubscriptions(LocalDateTime.now());
-        if (count > 0) log.info("Bulk expired {} subscription(s).", count);
+        LocalDateTime now = now();
+        Pageable batch = org.springframework.data.domain.PageRequest.of(0, EXPIRY_BATCH_SIZE);
+        int total = 0;
+        List<Subscription> expiring;
+        // Process in bounded batches so the job never loads an unbounded set into memory. Each
+        // batch is bulk-expired by id (version bumped) and gets an EXPIRED event per row.
+        do {
+            expiring = subscriptionRepository.findExpiredActive(now, batch);
+            if (expiring.isEmpty()) break;
+            expiring.forEach(s -> recordEvent(s, SubscriptionEvent.EventType.EXPIRED, BigDecimal.ZERO, null));
+            subscriptionRepository.expireByIds(expiring.stream().map(Subscription::getId).toList());
+            total += expiring.size();
+        } while (expiring.size() == EXPIRY_BATCH_SIZE);
+        if (total > 0) log.info("Expired {} subscription(s).", total);
     }
+
+    private static final int EXPIRY_BATCH_SIZE = 200;
 
     @Override
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -258,10 +538,29 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         // NOT_SUPPORTED: entities are loaded without an outer transaction so they become
         // detached after the query. Each renewSingle call (REQUIRES_NEW) merges and saves
         // the entity in its own transaction — one failure never rolls back the rest.
-        List<Subscription> due = subscriptionRepository.findSubscriptionsForRenewal(LocalDateTime.now().plusDays(1));
+        List<Subscription> due = subscriptionRepository.findSubscriptionsForRenewal(now().plusDays(1));
         if (due.isEmpty()) return;
 
-        long count = due.stream().filter(renewalProcessor::renewSingle).count();
+        int count = 0;
+        for (Subscription subscription : due) {
+            // Charge OUTSIDE the per-renewal transaction (plan/user are fetched on the detached row),
+            // then apply in its own REQUIRES_NEW tx; refund if applying fails after a successful charge.
+            String reference;
+            try {
+                reference = paymentGateway.charge(subscription.getUser().getId(),
+                        subscription.getPlan().getPrice(), "RENEWED " + subscription.getPlan().getName()).reference();
+            } catch (Exception e) {
+                log.error("Auto-renewal charge failed for subscription {} — skipped", subscription.getId(), e);
+                continue;
+            }
+            try {
+                renewalProcessor.applyRenewal(subscription, reference);
+                count++;
+            } catch (Exception e) {
+                paymentGateway.refund(reference, subscription.getPlan().getPrice());
+                log.error("Auto-renewal apply failed for subscription {} — charge refunded", subscription.getId(), e);
+            }
+        }
         if (count > 0) log.info("Renewed {} subscription(s).", count);
     }
 
@@ -272,10 +571,16 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     public Map<String, Object> getAnalyticsStats() {
         long activeCount = subscriptionRepository.countByStatus(Subscription.SubscriptionStatus.ACTIVE);
         long totalCount = subscriptionRepository.count();
-        BigDecimal totalRevenue = subscriptionRepository.sumActivePaidAmount();
-        if (totalRevenue == null) totalRevenue = BigDecimal.ZERO;
+
+        // Current active recurring revenue (the active rows' current-period paidAmount).
+        BigDecimal activeRevenue = subscriptionRepository.sumActivePaidAmount();
+        if (activeRevenue == null) activeRevenue = BigDecimal.ZERO;
+        // Lifetime billed revenue, from the immutable event log (survives cancel/expiry/renewal).
+        BigDecimal lifetimeRevenue = eventRepository.sumLifetimeRevenue();
+        if (lifetimeRevenue == null) lifetimeRevenue = BigDecimal.ZERO;
+
         BigDecimal avgRevenue = activeCount == 0 ? BigDecimal.ZERO
-                : totalRevenue.divide(BigDecimal.valueOf(activeCount), 2, RoundingMode.HALF_UP);
+                : activeRevenue.divide(BigDecimal.valueOf(activeCount), 2, RoundingMode.HALF_UP);
 
         Map<String, Long> tierDist = subscriptionRepository.countActiveGroupedByTier().stream()
                 .collect(Collectors.toMap(r -> (String) r[0], r -> (Long) r[1]));
@@ -283,7 +588,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 .collect(Collectors.toMap(r -> r[0].toString(), r -> (Long) r[1]));
 
         Map<String, Object> stats = new HashMap<>();
-        stats.put("totalRevenue", totalRevenue);
+        stats.put("activeRecurringRevenue", activeRevenue);
+        stats.put("lifetimeRevenue", lifetimeRevenue);
         stats.put("averageRevenuePerUser", avgRevenue);
         stats.put("activeSubscriptions", activeCount);
         stats.put("totalSubscriptions", totalCount);
@@ -310,6 +616,12 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     }
 
     private SubscriptionDTO convertToDTO(Subscription s) {
+        // Derive isActive/daysRemaining from the injected (UTC) clock so they agree with the
+        // UTC-stored timestamps, rather than the entity's system-zone LocalDateTime.now().
+        LocalDateTime now = now();
+        boolean active = s.getStatus() == Subscription.SubscriptionStatus.ACTIVE && now.isBefore(s.getEndDate());
+        boolean expired = s.getStatus() == Subscription.SubscriptionStatus.EXPIRED || now.isAfter(s.getEndDate());
+        long daysRemaining = expired ? 0 : ChronoUnit.DAYS.between(now, s.getEndDate());
         return SubscriptionDTO.builder()
                 .id(s.getId())
                 .userId(s.getUser().getId())
@@ -326,8 +638,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 .endDate(s.getEndDate())
                 .nextBillingDate(s.getNextBillingDate())
                 .autoRenewal(s.getAutoRenewal())
-                .daysRemaining(s.getDaysRemaining())
-                .isActive(s.isActive())
+                .daysRemaining(daysRemaining)
+                .isActive(active)
                 .cancelledAt(s.getCancelledAt())
                 .cancellationReason(s.getCancellationReason())
                 .discountPercentage(s.getPlan().getTier().getDiscountPercentage())
@@ -341,22 +653,27 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 .build();
     }
 
-    private BigDecimal calculateProRated(Subscription subscription, MembershipPlan currentPlan, MembershipPlan newPlan) {
-        LocalDateTime now = LocalDateTime.now();
+    /**
+     * Charge for upgrading to {@code newPlan}, which starts a fresh full term from now.
+     *
+     * The user is billed the new plan's full price, less a credit for the unused portion of
+     * the current period (remaining days ÷ total days × current price). Clamped at zero so an
+     * unusually large credit (e.g. switching to a much shorter billing cycle) never produces a
+     * negative charge — the system does not refund on upgrade.
+     */
+    private BigDecimal calculateUpgradeCharge(Subscription subscription, MembershipPlan currentPlan,
+                                              MembershipPlan newPlan, LocalDateTime now) {
         long totalDays = ChronoUnit.DAYS.between(subscription.getStartDate(), subscription.getEndDate());
         long remainingDays = ChronoUnit.DAYS.between(now, subscription.getEndDate());
 
-        if (remainingDays <= 0) return newPlan.getPrice();
+        BigDecimal unusedValue = BigDecimal.ZERO;
+        if (remainingDays > 0 && totalDays > 0) {
+            unusedValue = currentPlan.getPrice()
+                    .multiply(BigDecimal.valueOf(remainingDays))
+                    .divide(BigDecimal.valueOf(totalDays), 2, RoundingMode.HALF_UP);
+        }
 
-        BigDecimal unusedValue = currentPlan.getPrice()
-                .multiply(BigDecimal.valueOf(remainingDays))
-                .divide(BigDecimal.valueOf(totalDays), 2, RoundingMode.HALF_UP);
-
-        BigDecimal newCost = newPlan.getPrice()
-                .multiply(BigDecimal.valueOf(remainingDays))
-                .divide(BigDecimal.valueOf(totalDays), 2, RoundingMode.HALF_UP);
-
-        return newCost.subtract(unusedValue);
+        return newPlan.getPrice().subtract(unusedValue).max(BigDecimal.ZERO);
     }
 
     private boolean isValidTransition(Subscription.SubscriptionStatus from, Subscription.SubscriptionStatus to) {

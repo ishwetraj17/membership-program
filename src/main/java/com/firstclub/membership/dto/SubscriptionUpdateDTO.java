@@ -1,12 +1,16 @@
 package com.firstclub.membership.dto;
 
 import com.firstclub.membership.entity.Subscription;
-import jakarta.validation.constraints.Min;
 import lombok.Data;
 import lombok.Builder;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
+/**
+ * Settings-only update for an existing subscription. Plan changes are intentionally
+ * not handled here — use the dedicated upgrade / downgrade endpoints, which apply the
+ * correct direction validation, pro-ration and date anchoring.
+ */
 @Data
 @Builder
 @NoArgsConstructor
@@ -14,11 +18,8 @@ import lombok.AllArgsConstructor;
 public class SubscriptionUpdateDTO {
 
     private Boolean autoRenewal;
-    
-    @Min(value = 1, message = "Plan ID must be positive")
-    private Long newPlanId;
-    
+
     private Subscription.SubscriptionStatus status;
-    
+
     private String reason; // For cancellation or status changes
 }

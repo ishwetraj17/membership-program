@@ -1,0 +1,45 @@
+# Reference Kubernetes manifest. Uses the actuator liveness/readiness probes and the app's
+# graceful shutdown. Secrets (DB, JWT, seed passwords) come from a Secret, never the image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: membership-program
+  labels: { app: membership-program }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: membership-program }
+  template:
+    metadata:
+      labels: { app: membership-program }
+    spec:
+      terminationGracePeriodSeconds: 40   # > spring.lifecycle.timeout-per-shutdown-phase
+      containers:
+        - name: app
+          image: ghcr.io/firstclub/membership-program:latest
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: SPRING_PROFILES_ACTIVE, value: "prod" }
+            - { name: DB_HOST, valueFrom: { secretKeyRef: { name: membership-secrets, key: db-host } } }
+            - { name: DB_PASSWORD, valueFrom: { secretKeyRef: { name: membership-secrets, key: db-password } } }
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: membership-secrets, key: jwt-secret } } }
+            - { name: SEED_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: membership-secrets, key: admin-password } } }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: membership-program
+spec:
+  selector: { app: membership-program }
+  ports: [{ port: 80, targetPort: 8080 }]

@@ -1,5 +1,6 @@
 package com.firstclub.membership.service;
 
+import com.firstclub.membership.dto.CreatePlanRequest;
 import com.firstclub.membership.dto.MembershipPlanDTO;
 import com.firstclub.membership.entity.MembershipPlan;
 
@@ -13,4 +14,8 @@ public interface PlanService {
     List<MembershipPlanDTO> getPlansByTierId(Long tierId);
     List<MembershipPlanDTO> getPlansByType(MembershipPlan.PlanType type);
     Optional<MembershipPlanDTO> getPlanById(Long id);
+
+    // ─── Admin ─────────────────────────────────────────────────
+    MembershipPlanDTO createPlan(CreatePlanRequest request);
+    MembershipPlanDTO deactivatePlan(Long id);
 }

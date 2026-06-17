@@ -1,13 +1,16 @@
 package com.firstclub.membership.service.impl;
 
+import com.firstclub.membership.dto.CreatePlanRequest;
 import com.firstclub.membership.dto.MembershipPlanDTO;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.MembershipTier;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.MembershipTierRepository;
+import com.firstclub.membership.service.AuditService;
 import com.firstclub.membership.service.PlanService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +28,7 @@ public class PlanServiceImpl implements PlanService {
 
     private final MembershipTierRepository tierRepository;
     private final MembershipPlanRepository planRepository;
+    private final AuditService auditService;
 
     @Override
     public List<MembershipPlanDTO> getAllPlans() {
@@ -77,13 +81,49 @@ public class PlanServiceImpl implements PlanService {
         });
     }
 
+    // ─── Admin ──────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    @CacheEvict(value = "plans", allEntries = true)
+    public MembershipPlanDTO createPlan(CreatePlanRequest request) {
+        MembershipTier tier = tierRepository.findByName(request.getTierName().toUpperCase())
+                .orElseThrow(() -> MembershipException.tierNotFound(request.getTierName()));
+        MembershipPlan saved = planRepository.save(MembershipPlan.builder()
+                .name(request.getName())
+                .description(request.getDescription())
+                .type(request.getType())
+                .price(request.getPrice())
+                .durationInMonths(request.getDurationInMonths())
+                .tier(tier)
+                .isActive(true)
+                .build());
+        auditService.record("PLAN_CREATED", saved.getName());
+        return convertPlanToDTO(saved, buildMonthlyPriceMap(
+                planRepository.findByTierAndIsActiveTrue(tier)));
+    }
+
+    @Override
+    @Transactional
+    @CacheEvict(value = "plans", allEntries = true)
+    public MembershipPlanDTO deactivatePlan(Long id) {
+        MembershipPlan plan = planRepository.findById(id)
+                .orElseThrow(() -> MembershipException.planNotFound(id));
+        plan.setIsActive(false);
+        MembershipPlan saved = planRepository.save(plan);
+        return convertPlanToDTO(saved, buildMonthlyPriceMap(
+                planRepository.findByTierAndIsActiveTrue(plan.getTier())));
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private List<MembershipPlanDTO> convertPlans(List<MembershipPlan> plans) {
         Map<Long, BigDecimal> monthlyPriceByTierId = buildMonthlyPriceMap(plans);
+        // Immutable — getActivePlans() is @Cacheable, so the returned list is shared across
+        // callers; an unmodifiable copy prevents one caller from mutating the cache entry.
         return plans.stream()
                 .map(p -> convertPlanToDTO(p, monthlyPriceByTierId))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     private Map<Long, BigDecimal> buildMonthlyPriceMap(List<MembershipPlan> plans) {

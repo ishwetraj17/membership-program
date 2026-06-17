@@ -27,6 +27,15 @@ public class MembershipConfig {
 
     private PlanDiscounts planDiscounts = new PlanDiscounts();
 
+    /**
+     * When true, subscription creation enforces tier eligibility (the user must qualify for the
+     * plan's tier per {@code TierEvaluationService}). Off by default — see README for rationale.
+     */
+    private boolean enforceTierEligibility = false;
+
+    /** When true, cancelling an active subscription refunds the unused (pro-rated) portion. */
+    private boolean refundOnCancel = false;
+
     @Data
     public static class TierConfig {
         private int level;
