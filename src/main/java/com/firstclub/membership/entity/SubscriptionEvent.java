@@ -66,7 +66,10 @@ public class SubscriptionEvent {
     /** Outbox aggregate-type for subscription events. */
     public static final String AGGREGATE = "SUBSCRIPTION";
 
-    public enum EventType { CREATED, RENEWED, UPGRADED, DOWNGRADED, CANCELLED, EXPIRED, REFUNDED }
+    public enum EventType {
+        CREATED, RENEWED, UPGRADED, DOWNGRADED, CANCELLED, EXPIRED, REFUNDED,
+        TRIAL_STARTED, TRIAL_CONVERTED, TRIAL_EXPIRED
+    }
 
     @Override
     public boolean equals(Object o) {

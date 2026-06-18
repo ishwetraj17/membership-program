@@ -2,13 +2,18 @@ package com.firstclub.membership.initializer;
 
 import com.firstclub.membership.config.MembershipConfig;
 import com.firstclub.membership.entity.Benefit;
+import com.firstclub.membership.entity.BenefitRule;
+import com.firstclub.membership.entity.BenefitType;
 import com.firstclub.membership.entity.Coupon;
+import com.firstclub.membership.entity.IntroductoryOffer;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.MembershipTier;
 import com.firstclub.membership.entity.TierBenefit;
 import com.firstclub.membership.entity.TierEligibilityCriteria;
 import com.firstclub.membership.repository.BenefitRepository;
+import com.firstclub.membership.repository.BenefitRuleRepository;
 import com.firstclub.membership.repository.CouponRepository;
+import com.firstclub.membership.repository.IntroductoryOfferRepository;
 import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.MembershipTierRepository;
 import com.firstclub.membership.repository.TierBenefitRepository;
@@ -44,7 +49,9 @@ public class MembershipDataInitializer implements ApplicationRunner {
     private final TierEligibilityCriteriaRepository criteriaRepository;
     private final BenefitRepository benefitRepository;
     private final TierBenefitRepository tierBenefitRepository;
+    private final BenefitRuleRepository benefitRuleRepository;
     private final CouponRepository couponRepository;
+    private final IntroductoryOfferRepository introductoryOfferRepository;
     private final MembershipConfig membershipConfig;
 
     // Eligibility thresholds for GOLD and PLATINUM.
@@ -77,12 +84,27 @@ public class MembershipDataInitializer implements ApplicationRunner {
             createPlansForTier(saved, cfg.getBasePrice());
             createEligibilityCriteria(saved);
             attachBenefits(saved, cfg, catalog);
+            seedBenefitRules(saved, cfg);
             log.info("Created tier '{}' (level {}) — base price: {}", saved.getName(), saved.getLevel(), cfg.getBasePrice());
         });
 
         seedDemoCoupon();
+        seedIntroOffers();
 
         log.info("Membership initialisation complete — {} tiers created.", membershipConfig.getTiers().size());
+    }
+
+    /** Seeds the three canonical introductory offers so the acquisition flow works out of the box. */
+    private void seedIntroOffers() {
+        introOffer("FIRSTMONTH1", "₹1 first month", IntroductoryOffer.OfferType.FIXED_PRICE, BigDecimal.ONE);
+        introOffer("HALFOFF", "50% off first month", IntroductoryOffer.OfferType.PERCENT_OFF, new BigDecimal("50"));
+        introOffer("FREEMONTH", "Free first month", IntroductoryOffer.OfferType.FREE, null);
+    }
+
+    private void introOffer(String code, String description, IntroductoryOffer.OfferType type, BigDecimal value) {
+        if (introductoryOfferRepository.existsByCode(code)) return;
+        introductoryOfferRepository.save(IntroductoryOffer.builder()
+                .code(code).description(description).offerType(type).value(value).active(true).build());
     }
 
     /** Seeds a demo coupon so the redemption flow works out of the box. */
@@ -130,6 +152,31 @@ public class MembershipDataInitializer implements ApplicationRunner {
 
     private void link(MembershipTier tier, Benefit benefit, String value) {
         tierBenefitRepository.save(TierBenefit.builder().tier(tier).benefit(benefit).value(value).build());
+    }
+
+    /**
+     * Seeds the baseline commerce benefit rules that reproduce each tier's existing pricing
+     * behaviour: the headline percentage discount (whole cart, no threshold) and — for free-delivery
+     * tiers — an unconditional delivery-fee waiver. Threshold, category and other fee-waiver rules
+     * are added by business teams at runtime through the admin API.
+     */
+    private void seedBenefitRules(MembershipTier tier, MembershipConfig.TierConfig cfg) {
+        benefitRuleRepository.save(BenefitRule.builder()
+                .tier(tier)
+                .benefitType(BenefitType.PERCENTAGE_DISCOUNT)
+                .discountPercentage(cfg.getDiscountPercentage())
+                .priority(0)
+                .active(true)
+                .build());
+
+        if (cfg.isFreeDelivery()) {
+            benefitRuleRepository.save(BenefitRule.builder()
+                    .tier(tier)
+                    .benefitType(BenefitType.DELIVERY_FEE_WAIVER)
+                    .priority(0)
+                    .active(true)
+                    .build());
+        }
     }
 
     private MembershipTier buildTier(String name, MembershipConfig.TierConfig cfg) {

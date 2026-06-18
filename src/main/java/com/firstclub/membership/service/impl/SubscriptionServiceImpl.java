@@ -10,12 +10,16 @@ import com.firstclub.membership.event.SubscriptionDomainEvent;
 import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.repository.IdempotencyRecordRepository;
 import com.firstclub.membership.repository.MembershipPlanRepository;
+import com.firstclub.membership.repository.SavingsLedgerRepository;
 import com.firstclub.membership.repository.SubscriptionEventRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
+import com.firstclub.membership.service.IntroductoryOfferService;
 import com.firstclub.membership.service.PaymentGateway;
+import com.firstclub.membership.service.SavingsService;
 import com.firstclub.membership.service.SubscriptionService;
 import com.firstclub.membership.service.TierEvaluationService;
 import com.firstclub.membership.service.UserService;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -58,6 +62,11 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     private final PaymentGateway paymentGateway;
     private final MembershipConfig membershipConfig;
     private final PlatformTransactionManager txManager;
+    private final SavingsService savingsService;
+    private final IntroductoryOfferService introductoryOfferService;
+    private final TrialConversionProcessor trialConversionProcessor;
+    private final SavingsLedgerRepository savingsLedgerRepository;
+    private final MeterRegistry meterRegistry;
     private final Clock clock;
 
     private LocalDateTime now() {
@@ -160,12 +169,21 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                     "User " + user.getId() + " is not eligible for the " + plan.getTier().getName() + " tier",
                     "TIER_NOT_ELIGIBLE", HttpStatus.FORBIDDEN);
         }
+        // Introductory pricing (if supplied) discounts the first billing period only; the saga
+        // charges this amount, and the savings (full − first-period) are recorded at activation.
+        BigDecimal firstPeriodPrice = plan.getPrice();
+        if (request.getIntroOfferCode() != null && !request.getIntroOfferCode().isBlank()) {
+            IntroductoryOffer offer = introductoryOfferService.resolve(request.getIntroOfferCode(), plan.getId());
+            firstPeriodPrice = offer.firstPeriodPrice(plan.getPrice());
+            meterRegistry.counter("membership.intro.applied", "type", offer.getOfferType().name()).increment();
+        }
+
         LocalDateTime endDate = now.plusMonths(plan.getDurationInMonths());
         Subscription pending = subscriptionRepository.save(Subscription.builder()
                 .user(user).plan(plan)
                 .status(Subscription.SubscriptionStatus.PENDING)
                 .startDate(now).endDate(endDate).nextBillingDate(endDate)
-                .paidAmount(plan.getPrice())
+                .paidAmount(firstPeriodPrice)
                 .autoRenewal(request.getAutoRenewal())
                 .build());
         if (idempotent) {
@@ -185,6 +203,11 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         sub.setStatus(Subscription.SubscriptionStatus.ACTIVE);
         Subscription active = subscriptionRepository.save(sub);
         recordEvent(active, SubscriptionEvent.EventType.CREATED, active.getPaidAmount(), paymentReference);
+        // First-period savings from any introductory offer (full plan price − amount charged).
+        BigDecimal introSavings = active.getPlan().getPrice().subtract(active.getPaidAmount());
+        if (introSavings.signum() > 0) {
+            savingsService.recordIntroSavings(active.getUser().getId(), active.getId(), introSavings, now());
+        }
         log.info("Subscription created — id={}", active.getId());
         return convertToDTO(active);
     }
@@ -214,7 +237,93 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     }
 
     private String requestHash(SubscriptionRequestDTO request) {
-        return request.getUserId() + ":" + request.getPlanId() + ":" + request.getAutoRenewal();
+        return request.getUserId() + ":" + request.getPlanId() + ":" + request.getAutoRenewal()
+                + ":" + request.getIntroOfferCode();
+    }
+
+    // ─── Trials ─────────────────────────────────────────────────────────────
+
+    private static final java.util.Set<Integer> ALLOWED_TRIAL_DAYS = java.util.Set.of(7, 14, 30);
+
+    @Override
+    public SubscriptionDTO startTrial(TrialRequest request) {
+        if (request.getTrialDays() == null || !ALLOWED_TRIAL_DAYS.contains(request.getTrialDays())) {
+            throw new MembershipException("Trial length must be 7, 14 or 30 days", "INVALID_TRIAL_LENGTH");
+        }
+        log.info("Starting {}-day trial — userId={} planId={}",
+                request.getTrialDays(), request.getUserId(), request.getPlanId());
+
+        User user = userService.findUserEntityById(request.getUserId());
+        MembershipPlan plan = planRepository.findById(request.getPlanId())
+                .orElseThrow(() -> MembershipException.planNotFound(request.getPlanId()));
+        if (!plan.getIsActive()) {
+            throw MembershipException.inactivePlan(plan.getId());
+        }
+        LocalDateTime now = now();
+        if (subscriptionRepository.findActiveSubscriptionByUser(user, now).isPresent()) {
+            throw MembershipException.userAlreadySubscribed(user.getId());
+        }
+
+        // A trial is an ACTIVE (so it grants benefits), unpaid subscription whose end date is the
+        // trial end. No charge now — the conversion job bills (or expires) it at the trial end.
+        LocalDateTime trialEnd = now.plusDays(request.getTrialDays());
+        Subscription trial = subscriptionRepository.save(Subscription.builder()
+                .user(user).plan(plan)
+                .status(Subscription.SubscriptionStatus.ACTIVE)
+                .startDate(now).endDate(trialEnd).nextBillingDate(trialEnd)
+                .paidAmount(BigDecimal.ZERO)
+                .autoRenewal(request.getAutoRenewal())
+                .trial(true).trialEndDate(trialEnd).trialConverted(false)
+                .build());
+        recordEvent(trial, SubscriptionEvent.EventType.TRIAL_STARTED, BigDecimal.ZERO, null);
+        meterRegistry.counter("membership.trial.started", "days", String.valueOf(request.getTrialDays())).increment();
+        log.info("Trial started — id={} endsAt={}", trial.getId(), trialEnd);
+        return convertToDTO(trial);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void processTrialConversions() {
+        // Same shape as processRenewals: load detached trials, charge OUTSIDE the per-trial tx,
+        // then convert (or expire) in a REQUIRES_NEW tx so one failure never affects the batch.
+        List<Subscription> due = subscriptionRepository.findTrialsDue(now());
+        if (due.isEmpty()) return;
+
+        int converted = 0, expired = 0;
+        for (Subscription trial : due) {
+            // Isolate each trial: an unexpected failure (e.g. an optimistic-lock clash with a
+            // concurrent cancel) must never abort the rest of the batch.
+            try {
+                if (!Boolean.TRUE.equals(trial.getAutoRenewal())) {
+                    trialConversionProcessor.expire(trial);
+                    meterRegistry.counter("membership.trial.expired", "reason", "no_auto_renew").increment();
+                    expired++;
+                    continue;
+                }
+                String reference;
+                try {
+                    reference = paymentGateway.charge(trial.getUser().getId(), trial.getPlan().getPrice(),
+                            "TRIAL_CONVERSION " + trial.getPlan().getName()).reference();
+                } catch (Exception e) {
+                    trialConversionProcessor.expire(trial);
+                    meterRegistry.counter("membership.trial.expired", "reason", "charge_failed").increment();
+                    expired++;
+                    log.warn("Trial {} conversion charge failed — expired", trial.getId(), e);
+                    continue;
+                }
+                try {
+                    trialConversionProcessor.convert(trial, reference);
+                    meterRegistry.counter("membership.trial.converted").increment();
+                    converted++;
+                } catch (Exception e) {
+                    paymentGateway.refund(reference, trial.getPlan().getPrice());
+                    log.error("Trial {} conversion apply failed — charge refunded", trial.getId(), e);
+                }
+            } catch (Exception e) {
+                log.error("Trial {} processing failed — skipped", trial.getId(), e);
+            }
+        }
+        if (converted + expired > 0) log.info("Trials processed — converted={} expired={}", converted, expired);
     }
 
     @Override
@@ -315,6 +424,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         // Same saga shape as create: validate (read) → charge OUTSIDE the tx → apply / refund.
         ChargeContext ctx = inTx(() -> {
             Subscription s = findById(subscriptionId);
+            requireNotTrial(s);
             if (s.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
                 throw new MembershipException("Only expired subscriptions can be renewed", "INVALID_SUBSCRIPTION_STATUS");
             }
@@ -363,9 +473,24 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         }
     }
 
+    /**
+     * Trials must only ever progress through the trial-conversion job. Allowing a manual
+     * renew/upgrade/downgrade on a trial would charge here and leave {@code trial=true}, so the
+     * conversion job would then charge again — guard against that double-billing class.
+     */
+    private void requireNotTrial(Subscription s) {
+        if (Boolean.TRUE.equals(s.getTrial())) {
+            throw new MembershipException(
+                    "A trial cannot be renewed, upgraded or downgraded — it converts automatically; "
+                            + "subscribe to a paid plan instead",
+                    "TRIAL_NOT_MODIFIABLE");
+        }
+    }
+
     /** Validates an upgrade and computes the pro-rated charge — no mutation. */
     private UpgradeContext validateUpgrade(Long subscriptionId, Long newPlanId) {
         Subscription subscription = findById(subscriptionId);
+        requireNotTrial(subscription);
         if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
             throw new MembershipException("Cannot upgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
         }
@@ -436,6 +561,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         log.info("Downgrading subscription {} to plan {}", subscriptionId, newPlanId);
 
         Subscription subscription = findById(subscriptionId);
+        requireNotTrial(subscription);
         if (subscription.getStatus() != Subscription.SubscriptionStatus.ACTIVE) {
             throw new MembershipException("Cannot downgrade non-active subscription", "INVALID_SUBSCRIPTION_STATUS");
         }
@@ -595,7 +721,35 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         stats.put("totalSubscriptions", totalCount);
         stats.put("tierDistribution", tierDist);
         stats.put("planTypeDistribution", planTypeDist);
+        stats.putAll(retentionMetrics());
         return stats;
+    }
+
+    /** Acquisition/retention KPIs: active members, trial conversion, average savings per member. */
+    private Map<String, Object> retentionMetrics() {
+        long activeMembers = subscriptionRepository.countUsersWithActiveSubscriptions();
+        long activeTrials = subscriptionRepository.countActiveTrials();
+        long trialsStarted = subscriptionRepository.countTrialsStarted();
+        long trialsConverted = subscriptionRepository.countTrialsConverted();
+        BigDecimal conversionRate = trialsStarted == 0 ? BigDecimal.ZERO
+                : BigDecimal.valueOf(trialsConverted)
+                    .divide(BigDecimal.valueOf(trialsStarted), 4, RoundingMode.HALF_UP);
+
+        BigDecimal totalSavings = savingsLedgerRepository.totalSavings();
+        if (totalSavings == null) totalSavings = BigDecimal.ZERO;
+        long savingMembers = savingsLedgerRepository.distinctMembersWithSavings();
+        BigDecimal avgSavings = savingMembers == 0 ? BigDecimal.ZERO
+                : totalSavings.divide(BigDecimal.valueOf(savingMembers), 2, RoundingMode.HALF_UP);
+
+        Map<String, Object> retention = new HashMap<>();
+        retention.put("activeMembers", activeMembers);
+        retention.put("activeTrials", activeTrials);
+        retention.put("trialsStarted", trialsStarted);
+        retention.put("trialsConverted", trialsConverted);
+        retention.put("trialConversionRate", conversionRate);
+        retention.put("totalMemberSavings", totalSavings);
+        retention.put("averageSavingsPerMember", avgSavings);
+        return retention;
     }
 
     @Override
@@ -631,6 +785,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 .planName(s.getPlan().getName())
                 .planType(s.getPlan().getType().name())
                 .tier(s.getPlan().getTier().getName())
+                .tierId(s.getPlan().getTier().getId())
                 .tierLevel(s.getPlan().getTier().getLevel())
                 .paidAmount(s.getPaidAmount())
                 .status(s.getStatus())
@@ -640,6 +795,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 .autoRenewal(s.getAutoRenewal())
                 .daysRemaining(daysRemaining)
                 .isActive(active)
+                .trial(s.getTrial())
+                .trialEndDate(s.getTrialEndDate())
+                .trialConverted(s.getTrialConverted())
                 .cancelledAt(s.getCancelledAt())
                 .cancellationReason(s.getCancellationReason())
                 .discountPercentage(s.getPlan().getTier().getDiscountPercentage())

@@ -32,6 +32,14 @@ public class SubscriptionScheduler {
         subscriptionService.processRenewals();
     }
 
+    /** Converts (or expires) trials whose window has ended. Runs hourly. */
+    @Scheduled(cron = "0 30 * * * *")
+    @SchedulerLock(name = "processTrialConversions", lockAtMostFor = "30m", lockAtLeastFor = "30s")
+    public void processTrialConversions() {
+        log.debug("Trial conversion job triggered");
+        subscriptionService.processTrialConversions();
+    }
+
     /** Recomputes every user's earned tier from their order activity. Runs daily at 2 AM. */
     @Scheduled(cron = "0 0 2 * * *")
     @SchedulerLock(name = "reevaluateEarnedTiers", lockAtMostFor = "30m", lockAtLeastFor = "1m")

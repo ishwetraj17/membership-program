@@ -50,6 +50,14 @@ class SubscriptionServiceTest {
     @Mock private TierEvaluationService tierEvaluationService;
     @Mock private PaymentGateway paymentGateway;
     @Mock private org.springframework.transaction.PlatformTransactionManager txManager;
+    @Mock private com.firstclub.membership.service.SavingsService savingsService;
+    @Mock private com.firstclub.membership.service.IntroductoryOfferService introductoryOfferService;
+    @Mock private com.firstclub.membership.service.impl.TrialConversionProcessor trialConversionProcessor;
+    @Mock private com.firstclub.membership.repository.SavingsLedgerRepository savingsLedgerRepository;
+
+    // Real registry so counter().increment() works without stubbing.
+    private final io.micrometer.core.instrument.MeterRegistry meterRegistry =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
 
     // Fixed clock so pro-ration and date arithmetic are fully deterministic.
     private final Clock fixedClock = Clock.fixed(Instant.parse("2026-01-15T10:00:00Z"), ZoneOffset.UTC);
@@ -67,7 +75,9 @@ class SubscriptionServiceTest {
         subscriptionService = new SubscriptionServiceImpl(
                 subscriptionRepository, planRepository, userService, renewalProcessor,
                 eventRepository, idempotencyRepository, outboxEventService,
-                tierEvaluationService, paymentGateway, membershipConfig, txManager, fixedClock);
+                tierEvaluationService, paymentGateway, membershipConfig, txManager,
+                savingsService, introductoryOfferService, trialConversionProcessor,
+                savingsLedgerRepository, meterRegistry, fixedClock);
         lenient().when(paymentGateway.charge(any(), any(), any()))
                 .thenReturn(new PaymentGateway.PaymentResult("pay_test", true));
         lenient().when(paymentGateway.refund(any(), any()))

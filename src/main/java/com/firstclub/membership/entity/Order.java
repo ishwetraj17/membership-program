@@ -46,6 +46,23 @@ public class Order {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal deliveryFee;
 
+    // Additional quick-commerce fees actually charged (net of any waiver). Default zero.
+    @Builder.Default
+    @Column(name = "handling_fee", nullable = false, precision = 10, scale = 2)
+    private BigDecimal handlingFee = BigDecimal.ZERO;
+
+    @Builder.Default
+    @Column(name = "small_cart_fee", nullable = false, precision = 10, scale = 2)
+    private BigDecimal smallCartFee = BigDecimal.ZERO;
+
+    @Builder.Default
+    @Column(name = "surge_fee", nullable = false, precision = 10, scale = 2)
+    private BigDecimal surgeFee = BigDecimal.ZERO;
+
+    @Builder.Default
+    @Column(name = "rain_fee", nullable = false, precision = 10, scale = 2)
+    private BigDecimal rainFee = BigDecimal.ZERO;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal total;
 

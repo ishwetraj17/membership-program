@@ -25,7 +25,12 @@ public class SubscriptionDTO {
     private Boolean autoRenewal;
     private Long daysRemaining;
     private Boolean isActive;
-    
+
+    // Trial details (Phase 3)
+    private Boolean trial;
+    private LocalDateTime trialEndDate;
+    private Boolean trialConverted;
+
     // User information
     private Long userId;
     private String userName;
@@ -38,6 +43,7 @@ public class SubscriptionDTO {
     
     // Tier information and benefits
     private String tier;
+    private Long tierId;
     private Integer tierLevel;
     private BigDecimal discountPercentage;
     private Boolean freeDelivery;

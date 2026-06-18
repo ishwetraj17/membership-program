@@ -61,6 +61,21 @@ public class Subscription {
     @Column
     private String cancellationReason;
 
+    // ─── Trial membership (Phase 3) ──────────────────────────────────────────
+    /** True while the subscription is in its (unpaid) trial window. */
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean trial = false;
+
+    /** When the trial ends; also non-null for converted/expired trials (i.e. "was a trial"). */
+    @Column
+    private LocalDateTime trialEndDate;
+
+    /** True once a trial converted to a paid subscription (for conversion-rate metrics). */
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean trialConverted = false;
+
     /**
      * Optimistic-locking version — Hibernate increments this on every UPDATE.
      * If two concurrent transactions read the same row, only the first to commit

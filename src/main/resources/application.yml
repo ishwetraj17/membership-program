@@ -71,6 +71,14 @@ rate-limit:
 outbox:
   relay:
     delay-ms: 10000
+  retention-days: 30
+
+# Entitlements cache — the checkout read path. Short TTL since event-driven invalidation keeps it
+# fresh; the TTL is just the backstop. Applied to the Redis cache (prod); Caffeine (dev) uses the
+# global cache spec.
+entitlements:
+  cache:
+    ttl-seconds: 300
 
 springdoc:
   api-docs:

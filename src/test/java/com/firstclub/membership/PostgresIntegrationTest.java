@@ -1,8 +1,11 @@
 package com.firstclub.membership;
 
+import com.firstclub.membership.dto.EntitlementsDTO;
+import com.firstclub.membership.dto.SubscriptionDTO;
 import com.firstclub.membership.dto.SubscriptionRequestDTO;
 import com.firstclub.membership.dto.UserDTO;
 import com.firstclub.membership.exception.MembershipException;
+import com.firstclub.membership.service.EntitlementsService;
 import com.firstclub.membership.service.MembershipService;
 import com.firstclub.membership.service.PlanService;
 import com.firstclub.membership.service.SubscriptionService;
@@ -47,6 +50,7 @@ class PostgresIntegrationTest {
     @Autowired private MembershipService membershipService;
     @Autowired private UserService userService;
     @Autowired private SubscriptionService subscriptionService;
+    @Autowired private EntitlementsService entitlementsService;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     @Test
@@ -118,5 +122,38 @@ class PostgresIntegrationTest {
         // The partial unique index guarantees exactly one winner under the race.
         assertThat(successes).isEqualTo(1);
         assertThat(subscriptionService.getActiveSubscription(user.getId())).isPresent();
+    }
+
+    @Test
+    @DisplayName("Entitlements: non-member, member, and event-driven cache invalidation on cancel")
+    void entitlementsLifecycleAndInvalidation() {
+        UserDTO user = userService.createUser(UserDTO.builder()
+                .name("Ent User").email("ent" + System.nanoTime() + "@test.com")
+                .phoneNumber("9876543210").address("1 Test").city("Mumbai")
+                .state("Maharashtra").pincode("400001").build());
+
+        // No subscription yet → safe non-member entitlements (not an error).
+        EntitlementsDTO before = entitlementsService.getEntitlements(user.getId());
+        assertThat(before.isMember()).isFalse();
+        assertThat(before.isFallback()).isFalse();
+        assertThat(before.getDiscountPercentage()).isEqualByComparingTo("0");
+
+        Long planId = planService.getActivePlans().get(0).getId();
+        SubscriptionDTO sub = subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                .userId(user.getId()).planId(planId).autoRenewal(true).build());
+
+        // After subscribing, the AFTER_COMMIT listener has invalidated the cached non-member entry,
+        // so the next read reflects membership.
+        EntitlementsDTO active = entitlementsService.getEntitlements(user.getId());
+        assertThat(active.isMember()).isTrue();
+        assertThat(active.getTier()).isNotBlank();
+        assertThat(active.getDiscountPercentage()).isGreaterThan(java.math.BigDecimal.ZERO);
+        assertThat(active.getMembershipExpiry()).isNotNull();
+
+        // This read populates the cache; cancelling must invalidate it via the same event path.
+        subscriptionService.cancelSubscription(sub.getId(), "test");
+
+        EntitlementsDTO afterCancel = entitlementsService.getEntitlements(user.getId());
+        assertThat(afterCancel.isMember()).isFalse();
     }
 }

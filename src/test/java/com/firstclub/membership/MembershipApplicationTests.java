@@ -2,6 +2,8 @@ package com.firstclub.membership;
 
 import com.firstclub.membership.dto.*;
 import com.firstclub.membership.entity.Benefit;
+import com.firstclub.membership.entity.BenefitType;
+import com.firstclub.membership.entity.ProductCategory;
 import com.firstclub.membership.entity.MembershipPlan;
 import com.firstclub.membership.entity.Subscription;
 import com.firstclub.membership.entity.SubscriptionEvent;
@@ -9,7 +11,17 @@ import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.entity.AuditEvent;
 import com.firstclub.membership.entity.OutboxEvent;
 import com.firstclub.membership.repository.AuditEventRepository;
+import com.firstclub.membership.repository.MembershipTierRepository;
 import com.firstclub.membership.repository.OutboxEventRepository;
+import com.firstclub.membership.repository.SubscriptionRepository;
+import com.firstclub.membership.service.SavingsService;
+import com.firstclub.membership.entity.FeeType;
+import com.firstclub.membership.entity.MembershipTier;
+import com.firstclub.membership.service.BenefitEngine;
+import com.firstclub.membership.service.BenefitRuleService;
+import com.firstclub.membership.service.EntitlementsService;
+import com.firstclub.membership.service.benefit.BenefitEvaluation;
+import com.firstclub.membership.service.benefit.CartContext;
 import com.firstclub.membership.entity.Coupon;
 import com.firstclub.membership.event.OutboxEventService;
 import com.firstclub.membership.service.CheckoutService;
@@ -33,6 +45,7 @@ import org.springframework.http.*;
 import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +84,12 @@ class MembershipApplicationTests {
     @Autowired private EarnedTierService earnedTierService;
     @Autowired private CheckoutService checkoutService;
     @Autowired private CouponService couponService;
+    @Autowired private BenefitRuleService benefitRuleService;
+    @Autowired private BenefitEngine benefitEngine;
+    @Autowired private EntitlementsService entitlementsService;
+    @Autowired private SavingsService savingsService;
+    @Autowired private MembershipTierRepository tierRepository;
+    @Autowired private SubscriptionRepository subscriptionRepository;
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private AuditEventRepository auditEventRepository;
     @Autowired private OutboxEventService outboxEventService;
@@ -602,6 +621,302 @@ class MembershipApplicationTests {
             CheckoutQuoteResponse r = checkoutService.quote(req);
             assertThat(r.getCouponDiscount()).isEqualByComparingTo("100.00"); // 10% of 1000 (no membership)
             assertThat(r.getTotal()).isEqualByComparingTo("949.00");          // 1000 - 100 + 49
+        }
+    }
+
+    @Nested @DisplayName("Phase 2 — Benefit engine")
+    class BenefitEngineTests {
+
+        private CartContext cart(String subtotal, Map<ProductCategory, BigDecimal> categories,
+                                 Map<FeeType, BigDecimal> fees) {
+            return CartContext.builder().subtotal(new BigDecimal(subtotal))
+                    .categorySubtotals(categories).fees(fees).build();
+        }
+
+        /** A bare tier with no plans — enough to attach benefit rules and exercise the engine. */
+        private MembershipTier freshTier() {
+            return tierRepository.save(MembershipTier.builder()
+                    .name("PHASE2_" + System.nanoTime()).description("test").level(99)
+                    .discountPercentage(BigDecimal.ZERO).freeDelivery(false).exclusiveDeals(false)
+                    .earlyAccess(false).prioritySupport(false).maxCouponsPerMonth(0).deliveryDays(5)
+                    .additionalBenefits("").build());
+        }
+
+        /** Remove a throwaway tier and its rules so shared seeded state stays at exactly 3 tiers. */
+        private void cleanup(MembershipTier tier) {
+            benefitRuleService.listByTier(tier.getId()).forEach(r -> benefitRuleService.delete(r.getId()));
+            tierRepository.delete(tier);
+        }
+
+        @Test @DisplayName("checkout applies the fee model and coupon together for a member")
+        void checkoutFeesAndCoupon() {
+            UserDTO user = userService.createUser(testUser("P2 Gold", "p2gold"));
+            MembershipPlanDTO gold = planService.getActivePlans().stream()
+                    .filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+                    .findFirst().orElseThrow();
+            subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(user.getId()).planId(gold.getId()).autoRenewal(true).build());
+
+            CheckoutQuoteRequest req = CheckoutQuoteRequest.builder()
+                    .userId(user.getId())
+                    .items(List.of(new QuoteLineItem("Phone", "ELECTRONICS", new BigDecimal("1000.00"), 1)))
+                    .deliveryFee(new BigDecimal("49.00"))
+                    .handlingFee(new BigDecimal("10.00"))
+                    .surgeFee(new BigDecimal("20.00"))
+                    .couponCode("WELCOME10")
+                    .build();
+            CheckoutQuoteResponse r = checkoutService.quote(req);
+
+            assertThat(r.getDiscountAmount()).isEqualByComparingTo("100.00"); // GOLD 10%
+            assertThat(r.isDeliveryWaived()).isTrue();                        // GOLD free delivery
+            assertThat(r.getDeliveryFee()).isEqualByComparingTo("0.00");      // waived → charged 0
+            assertThat(r.getHandlingFee()).isEqualByComparingTo("10.00");     // not waived
+            assertThat(r.getSurgeFee()).isEqualByComparingTo("20.00");
+            assertThat(r.getTotalFees()).isEqualByComparingTo("30.00");
+            assertThat(r.getWaivedFees()).contains("DELIVERY");
+            assertThat(r.getCouponDiscount()).isEqualByComparingTo("90.00"); // 10% of (1000-100)
+            assertThat(r.getTotal()).isEqualByComparingTo("840.00");         // 900 - 90 + 30
+        }
+
+        @Test @DisplayName("admin-configured threshold + category rules are read back by the engine")
+        void adminConfiguredRulesDriveEngine() {
+            MembershipTier tier = freshTier();
+            try {
+                benefitRuleService.create(BenefitRuleRequest.builder()
+                        .tierId(tier.getId()).benefitType(BenefitType.PERCENTAGE_DISCOUNT)
+                        .productCategory(ProductCategory.BEAUTY).discountPercentage(new BigDecimal("20.00"))
+                        .build());
+                benefitRuleService.create(BenefitRuleRequest.builder()
+                        .tierId(tier.getId()).benefitType(BenefitType.DELIVERY_FEE_WAIVER)
+                        .minCartValue(new BigDecimal("199.00")).build());
+
+                assertThat(benefitRuleService.listByTier(tier.getId())).hasSize(2);
+
+                Map<ProductCategory, BigDecimal> beauty = Map.of(ProductCategory.BEAUTY, new BigDecimal("500.00"));
+                Map<FeeType, BigDecimal> delivery = Map.of(FeeType.DELIVERY, new BigDecimal("49.00"));
+
+                // Above the waiver threshold: 20% off beauty + delivery waived.
+                BenefitEvaluation above = benefitEngine.evaluate(tier.getId(), cart("500.00", beauty, delivery));
+                assertThat(above.getDiscountAmount()).isEqualByComparingTo("100.00");
+                assertThat(above.isWaived(FeeType.DELIVERY)).isTrue();
+
+                // Below the waiver threshold: discount still applies, delivery not waived.
+                Map<ProductCategory, BigDecimal> smallBeauty = Map.of(ProductCategory.BEAUTY, new BigDecimal("100.00"));
+                BenefitEvaluation below = benefitEngine.evaluate(tier.getId(), cart("100.00", smallBeauty, delivery));
+                assertThat(below.getDiscountAmount()).isEqualByComparingTo("20.00");
+                assertThat(below.isWaived(FeeType.DELIVERY)).isFalse();
+            } finally {
+                cleanup(tier);
+            }
+        }
+
+        @Test @DisplayName("deactivating a rule removes it from evaluation")
+        void deactivatingRuleRemovesIt() {
+            MembershipTier tier = freshTier();
+            try {
+                BenefitRuleDTO rule = benefitRuleService.create(BenefitRuleRequest.builder()
+                        .tierId(tier.getId()).benefitType(BenefitType.PERCENTAGE_DISCOUNT)
+                        .discountPercentage(new BigDecimal("10.00")).build());
+
+                Map<FeeType, BigDecimal> noFees = Map.of();
+                assertThat(benefitEngine.evaluate(tier.getId(), cart("1000.00", Map.of(), noFees)).getDiscountAmount())
+                        .isEqualByComparingTo("100.00");
+
+                benefitRuleService.update(rule.getId(), BenefitRuleRequest.builder()
+                        .tierId(tier.getId()).benefitType(BenefitType.PERCENTAGE_DISCOUNT)
+                        .discountPercentage(new BigDecimal("10.00")).active(false).build());
+
+                assertThat(benefitEngine.evaluate(tier.getId(), cart("1000.00", Map.of(), noFees)).getDiscountAmount())
+                        .isEqualByComparingTo("0.00");
+            } finally {
+                cleanup(tier);
+            }
+        }
+
+        @Test @DisplayName("entitlements reflect a member's configured fee waivers")
+        void entitlementsReflectRules() {
+            UserDTO user = userService.createUser(testUser("P2 Ent", "p2ent"));
+            MembershipPlanDTO gold = planService.getActivePlans().stream()
+                    .filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+                    .findFirst().orElseThrow();
+            subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(user.getId()).planId(gold.getId()).autoRenewal(true).build());
+
+            EntitlementsDTO ent = entitlementsService.getEntitlements(user.getId());
+            assertThat(ent.isMember()).isTrue();
+            assertThat(ent.getFeeWaivers()).contains("DELIVERY"); // GOLD baseline delivery waiver
+        }
+    }
+
+    @Nested @DisplayName("Phase 3 — Growth & retention")
+    class GrowthRetentionTests {
+
+        private MembershipPlanDTO goldMonthly() {
+            return planService.getActivePlans().stream()
+                    .filter(p -> "GOLD".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+                    .findFirst().orElseThrow();
+        }
+
+        private Long startTrial(Long userId, Long planId, int days, boolean autoRenew) {
+            return subscriptionService.startTrial(TrialRequest.builder()
+                    .userId(userId).planId(planId).trialDays(days).autoRenewal(autoRenew).build()).getId();
+        }
+
+        /** Force a trial's window into the past so the conversion job picks it up (clock is real). */
+        private void expireTrialWindow(Long subscriptionId) {
+            Subscription s = subscriptionRepository.findById(subscriptionId).orElseThrow();
+            s.setTrialEndDate(LocalDateTime.now().minusDays(1));
+            s.setEndDate(LocalDateTime.now().minusDays(1));
+            subscriptionRepository.save(s);
+        }
+
+        @Test @DisplayName("starting a trial grants active membership without a charge")
+        void trialGrantsMembership() {
+            UserDTO user = userService.createUser(testUser("Trial", "trial"));
+            SubscriptionDTO sub = subscriptionService.startTrial(TrialRequest.builder()
+                    .userId(user.getId()).planId(goldMonthly().getId()).trialDays(14).autoRenewal(true).build());
+
+            assertThat(sub.getTrial()).isTrue();
+            assertThat(sub.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            assertThat(sub.getPaidAmount()).isEqualByComparingTo("0");
+            assertThat(entitlementsService.getEntitlements(user.getId()).isMember()).isTrue();
+        }
+
+        @Test @DisplayName("only 7/14/30-day trials are allowed")
+        void trialLengthValidated() {
+            UserDTO user = userService.createUser(testUser("Trial Bad", "trialbad"));
+            assertThatThrownBy(() -> subscriptionService.startTrial(TrialRequest.builder()
+                    .userId(user.getId()).planId(goldMonthly().getId()).trialDays(10).autoRenewal(true).build()))
+                    .isInstanceOf(MembershipException.class);
+        }
+
+        @Test @DisplayName("a trial auto-converts to a paid subscription at the trial end")
+        void trialConverts() {
+            UserDTO user = userService.createUser(testUser("Convert", "convert3"));
+            BigDecimal price = goldMonthly().getPrice();
+            Long id = startTrial(user.getId(), goldMonthly().getId(), 7, true);
+
+            expireTrialWindow(id);
+            subscriptionService.processTrialConversions();
+
+            Subscription converted = subscriptionRepository.findById(id).orElseThrow();
+            assertThat(converted.getTrial()).isFalse();
+            assertThat(converted.getTrialConverted()).isTrue();
+            assertThat(converted.getStatus()).isEqualTo(Subscription.SubscriptionStatus.ACTIVE);
+            assertThat(converted.getPaidAmount()).isEqualByComparingTo(price);
+        }
+
+        @Test @DisplayName("the renewal job never touches a trial (no double billing)")
+        void renewalJobIgnoresTrials() {
+            UserDTO user = userService.createUser(testUser("NoRenew", "norenew3"));
+            Long id = startTrial(user.getId(), goldMonthly().getId(), 30, true);
+
+            // Make the trial look due for renewal (past billing date) while its trial window is
+            // still open — only the trial-conversion job should ever bill it.
+            Subscription s = subscriptionRepository.findById(id).orElseThrow();
+            s.setNextBillingDate(LocalDateTime.now().minusDays(1));
+            subscriptionRepository.save(s);
+
+            subscriptionService.processRenewals();
+
+            Subscription after = subscriptionRepository.findById(id).orElseThrow();
+            assertThat(after.getTrial()).isTrue();                 // still a trial — not renewed
+            assertThat(after.getPaidAmount()).isEqualByComparingTo("0"); // never charged
+        }
+
+        @Test @DisplayName("a trial without auto-renewal expires at the trial end")
+        void trialExpires() {
+            UserDTO user = userService.createUser(testUser("Expire", "expire3"));
+            Long id = startTrial(user.getId(), goldMonthly().getId(), 7, false);
+
+            expireTrialWindow(id);
+            subscriptionService.processTrialConversions();
+
+            Subscription expired = subscriptionRepository.findById(id).orElseThrow();
+            assertThat(expired.getStatus()).isEqualTo(Subscription.SubscriptionStatus.EXPIRED);
+            assertThat(expired.getTrialConverted()).isFalse();
+        }
+
+        @Test @DisplayName("a trial cannot be manually upgraded (would double-bill at conversion)")
+        void trialNotUpgradable() {
+            UserDTO user = userService.createUser(testUser("NoUpgrade", "noupgrade"));
+            Long id = startTrial(user.getId(), goldMonthly().getId(), 14, true);
+            MembershipPlanDTO platinum = planService.getActivePlans().stream()
+                    .filter(p -> "PLATINUM".equals(p.getTier()) && p.getType() == MembershipPlan.PlanType.MONTHLY)
+                    .findFirst().orElseThrow();
+
+            assertThatThrownBy(() -> subscriptionService.upgradeSubscription(id, platinum.getId()))
+                    .isInstanceOf(MembershipException.class)
+                    .hasMessageContaining("trial");
+        }
+
+        @Test @DisplayName("a trial can be cancelled")
+        void trialCancelled() {
+            UserDTO user = userService.createUser(testUser("CancelTrial", "canceltrial"));
+            Long id = startTrial(user.getId(), goldMonthly().getId(), 30, true);
+
+            SubscriptionDTO cancelled = subscriptionService.cancelSubscription(id, "changed mind");
+            assertThat(cancelled.getStatus()).isEqualTo(Subscription.SubscriptionStatus.CANCELLED);
+        }
+
+        @Test @DisplayName("introductory offers discount the first period and record the savings")
+        void introductoryPricing() {
+            BigDecimal price = goldMonthly().getPrice();
+
+            UserDTO free = userService.createUser(testUser("Free", "introfree"));
+            SubscriptionDTO freeSub = subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(free.getId()).planId(goldMonthly().getId()).autoRenewal(true)
+                    .introOfferCode("FREEMONTH").build());
+            assertThat(freeSub.getPaidAmount()).isEqualByComparingTo("0");
+            assertThat(savingsService.getUserSavings(free.getId()).getByBenefitType().get("INTRO_OFFER"))
+                    .isEqualByComparingTo(price);
+
+            UserDTO rupee = userService.createUser(testUser("Rupee", "introrupee"));
+            SubscriptionDTO rupeeSub = subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(rupee.getId()).planId(goldMonthly().getId()).autoRenewal(true)
+                    .introOfferCode("FIRSTMONTH1").build());
+            assertThat(rupeeSub.getPaidAmount()).isEqualByComparingTo("1.00");
+
+            UserDTO half = userService.createUser(testUser("Half", "introhalf"));
+            SubscriptionDTO halfSub = subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(half.getId()).planId(goldMonthly().getId()).autoRenewal(true)
+                    .introOfferCode("HALFOFF").build());
+            assertThat(halfSub.getPaidAmount()).isEqualByComparingTo(price.divide(new BigDecimal("2")));
+        }
+
+        @Test @DisplayName("savings tracker aggregates discounts, waived fees and coupon accurately")
+        void savingsAccuracy() {
+            UserDTO user = userService.createUser(testUser("Saver", "saver"));
+            subscriptionService.createSubscription(SubscriptionRequestDTO.builder()
+                    .userId(user.getId()).planId(goldMonthly().getId()).autoRenewal(true).build());
+
+            // GOLD: 10% discount + free delivery. Cart 1000 electronics, delivery 49, coupon WELCOME10.
+            checkoutService.confirm(CheckoutQuoteRequest.builder()
+                    .userId(user.getId())
+                    .items(List.of(new QuoteLineItem("Phone", "ELECTRONICS", new BigDecimal("1000.00"), 1)))
+                    .deliveryFee(new BigDecimal("49.00"))
+                    .couponCode("WELCOME10")
+                    .build());
+
+            SavingsSummaryDTO savings = savingsService.getUserSavings(user.getId());
+            assertThat(savings.getByBenefitType().get("MEMBERSHIP_DISCOUNT")).isEqualByComparingTo("100.00");
+            assertThat(savings.getByBenefitType().get("DELIVERY_FEE")).isEqualByComparingTo("49.00");
+            assertThat(savings.getByBenefitType().get("COUPON")).isEqualByComparingTo("90.00"); // 10% of 900
+            assertThat(savings.getByCategory().get("ELECTRONICS")).isEqualByComparingTo("100.00");
+            assertThat(savings.getLifetimeSavings()).isEqualByComparingTo("239.00");
+            assertThat(savings.getMonthlySavings()).isEqualByComparingTo("239.00");
+        }
+
+        @Test @DisplayName("analytics exposes retention metrics")
+        void retentionMetrics() {
+            UserDTO user = userService.createUser(testUser("Retain", "retain"));
+            startTrial(user.getId(), goldMonthly().getId(), 14, true);
+
+            Map<String, Object> stats = subscriptionService.getAnalyticsStats();
+            assertThat(stats).containsKeys("activeMembers", "trialsStarted", "trialsConverted",
+                    "trialConversionRate", "averageSavingsPerMember");
+            BigDecimal rate = (BigDecimal) stats.get("trialConversionRate");
+            assertThat(rate).isBetween(BigDecimal.ZERO, BigDecimal.ONE);
         }
     }
 

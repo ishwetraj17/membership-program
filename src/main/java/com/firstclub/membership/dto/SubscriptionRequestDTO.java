@@ -29,6 +29,10 @@ public class SubscriptionRequestDTO {
     @Schema(description = "Auto-renew on expiry", example = "true", defaultValue = "true")
     private Boolean autoRenewal = true;
 
+    @Schema(description = "Optional introductory-offer code applied to the first billing period",
+            example = "FIRSTMONTH1")
+    private String introOfferCode;
+
     @Schema(description = "Optional creation reason")
     private String reason;
 }

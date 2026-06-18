@@ -29,6 +29,16 @@ public class CheckoutQuoteResponse {
     private BigDecimal deliveryFee;
     private boolean deliveryWaived;
 
+    // Quick-commerce ancillary fees as charged (net of any waiver). Zero when not supplied.
+    private BigDecimal handlingFee;
+    private BigDecimal smallCartFee;
+    private BigDecimal surgeFee;
+    private BigDecimal rainFee;
+    /** Sum of all fees actually charged (delivery + handling + small-cart + surge + rain). */
+    private BigDecimal totalFees;
+    /** Names of fees waived by membership benefits, e.g. ["DELIVERY", "HANDLING"]. */
+    private List<String> waivedFees;
+
     private String couponCode;
     private BigDecimal couponDiscount;
 

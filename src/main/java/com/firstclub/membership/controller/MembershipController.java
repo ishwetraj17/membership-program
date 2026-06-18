@@ -171,6 +171,19 @@ public class MembershipController {
                 .body(subscriptionService.createSubscription(request, idempotencyKey));
     }
 
+    @PostMapping("/subscriptions/trial")
+    @Operation(summary = "Start a free trial (7/14/30 days)",
+            description = "Creates an active, unpaid trial that auto-converts to paid (or expires) at the trial end.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Trial started"),
+        @ApiResponse(responseCode = "400", description = "Invalid trial length"),
+        @ApiResponse(responseCode = "409", description = "User already has an active subscription")
+    })
+    public ResponseEntity<SubscriptionDTO> startTrial(@Valid @RequestBody TrialRequest request) {
+        accessGuard.requireSelfOrAdmin(request.getUserId());
+        return ResponseEntity.status(HttpStatus.CREATED).body(subscriptionService.startTrial(request));
+    }
+
     @GetMapping("/subscriptions")
     @Operation(summary = "Get all subscriptions — paginated (admin)")
     public ResponseEntity<Page<SubscriptionDTO>> getAllSubscriptions(
@@ -309,6 +322,16 @@ public class MembershipController {
             "totalSubscriptions", stats.get("totalSubscriptions"),
             "activeSubscriptions", stats.get("activeSubscriptions"),
             "generatedAt", LocalDateTime.now()
+        ));
+        // Acquisition & retention KPIs (Phase 3).
+        analytics.put("retention", Map.of(
+            "activeMembers", stats.get("activeMembers"),
+            "activeTrials", stats.get("activeTrials"),
+            "trialsStarted", stats.get("trialsStarted"),
+            "trialsConverted", stats.get("trialsConverted"),
+            "trialConversionRate", stats.get("trialConversionRate"),
+            "totalMemberSavings", stats.get("totalMemberSavings"),
+            "averageSavingsPerMember", stats.get("averageSavingsPerMember")
         ));
         return ResponseEntity.ok(analytics);
     }

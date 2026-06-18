@@ -28,10 +28,21 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
     Optional<Subscription> findActiveSubscriptionByUser(@Param("user") User user,
                                                         @Param("now") LocalDateTime now);
 
+    /**
+     * Active subscription by user id (with plan + tier fetched) — the entitlements read path,
+     * which needs only the id and must not require loading the User aggregate.
+     */
+    @Query("SELECT s FROM Subscription s JOIN FETCH s.plan p JOIN FETCH p.tier " +
+           "WHERE s.user.id = :userId AND s.status = 'ACTIVE' AND s.endDate > :now")
+    Optional<Subscription> findActiveByUserId(@Param("userId") Long userId, @Param("now") LocalDateTime now);
+
     // JOIN FETCH ensures plan and tier are loaded before the session closes,
     // allowing detached entities to be processed safely in REQUIRES_NEW transactions.
+    // Trials are excluded — they bill (or expire) through the trial-conversion job, never here;
+    // otherwise a trial in its last day would be charged by both jobs (double billing).
     @Query("SELECT s FROM Subscription s JOIN FETCH s.plan p JOIN FETCH p.tier " +
-           "WHERE s.autoRenewal = true AND s.status = 'ACTIVE' AND s.nextBillingDate <= :renewalDate")
+           "WHERE s.autoRenewal = true AND s.status = 'ACTIVE' AND s.trial = false " +
+           "AND s.nextBillingDate <= :renewalDate")
     List<Subscription> findSubscriptionsForRenewal(@Param("renewalDate") LocalDateTime renewalDate);
 
     @Query("SELECT COUNT(s) > 0 FROM Subscription s WHERE s.user = :user " +
@@ -57,9 +68,26 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
      * user/plan/tier) so the service can write an EXPIRED event per row. Paged so the expiry
      * job never loads an unbounded set into memory.
      */
+    // Trials are excluded — the trial-conversion job handles their ending (convert or expire).
     @Query("SELECT s FROM Subscription s JOIN FETCH s.user JOIN FETCH s.plan p JOIN FETCH p.tier " +
-           "WHERE s.status = 'ACTIVE' AND s.endDate < :now ORDER BY s.id")
+           "WHERE s.status = 'ACTIVE' AND s.trial = false AND s.endDate < :now ORDER BY s.id")
     List<Subscription> findExpiredActive(@Param("now") LocalDateTime now, Pageable pageable);
+
+    /** Trials whose window has ended and are awaiting conversion or expiry (with plan + tier + user). */
+    @Query("SELECT s FROM Subscription s JOIN FETCH s.user JOIN FETCH s.plan p JOIN FETCH p.tier " +
+           "WHERE s.status = 'ACTIVE' AND s.trial = true AND s.trialEndDate <= :now ORDER BY s.id")
+    List<Subscription> findTrialsDue(@Param("now") LocalDateTime now);
+
+    /** Total trials ever started (trialEndDate set ⟺ began as a trial). */
+    @Query("SELECT COUNT(s) FROM Subscription s WHERE s.trialEndDate IS NOT NULL")
+    long countTrialsStarted();
+
+    @Query("SELECT COUNT(s) FROM Subscription s WHERE s.trialConverted = true")
+    long countTrialsConverted();
+
+    /** Trials currently in their (unpaid) window. */
+    @Query("SELECT COUNT(s) FROM Subscription s WHERE s.trial = true AND s.status = 'ACTIVE'")
+    long countActiveTrials();
 
     // ─── DB-level aggregates for health / analytics — avoids loading all rows ──
 

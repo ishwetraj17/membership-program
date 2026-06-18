@@ -32,6 +32,18 @@ public class CheckoutQuoteRequest {
     @Schema(description = "Standard delivery fee before membership benefits", example = "49.00")
     private BigDecimal deliveryFee;
 
+    @Schema(description = "Handling fee before benefits", example = "10.00")
+    private BigDecimal handlingFee;
+
+    @Schema(description = "Small-cart fee before benefits", example = "20.00")
+    private BigDecimal smallCartFee;
+
+    @Schema(description = "Surge fee before benefits", example = "30.00")
+    private BigDecimal surgeFee;
+
+    @Schema(description = "Rain/weather fee before benefits", example = "15.00")
+    private BigDecimal rainFee;
+
     @Schema(description = "Optional coupon code to preview", example = "WELCOME10")
     private String couponCode;
 }

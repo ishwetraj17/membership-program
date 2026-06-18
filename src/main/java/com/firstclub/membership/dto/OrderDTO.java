@@ -21,6 +21,10 @@ public class OrderDTO {
     private String couponCode;
     private BigDecimal couponDiscount;
     private BigDecimal deliveryFee;
+    private BigDecimal handlingFee;
+    private BigDecimal smallCartFee;
+    private BigDecimal surgeFee;
+    private BigDecimal rainFee;
     private BigDecimal total;
     private Order.Status status;
     private LocalDateTime placedAt;
