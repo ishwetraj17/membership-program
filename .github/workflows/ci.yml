@@ -38,5 +38,19 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+
+      # Cache the downloaded NVD database so each run doesn't re-pull the full feed
+      # (avoids NVD throttling / transient 524s slowing or failing the scan).
+      - name: Cache NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-data-${{ runner.os }}
+
       - name: OWASP dependency vulnerability scan
-        run: mvn -B -Psecurity verify -DskipTests
+        # NVD_API_KEY (optional repo secret) makes feed downloads fast and reliable.
+        # The scan is resilient to NVD outages (failOnError=false in the pom); it still
+        # fails the build on real CVSS >= 8 findings once the database is available.
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: mvn -B -Psecurity verify -DskipTests -Dnvd.api.key="$NVD_API_KEY"

@@ -26,6 +26,9 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.30</lombok.version>
+        <!-- OWASP dependency-check: optional NVD API key (set -Dnvd.api.key=… or the NVD_API_KEY
+             secret in CI for fast, reliable feed downloads). Empty by default = keyless. -->
+        <nvd.api.key></nvd.api.key>
     </properties>
 
     <dependencies>
@@ -85,6 +88,12 @@
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- Flyway 11 moved per-database support into separate modules; required for PostgreSQL
+             (without it Flyway fails at startup with "Unsupported Database: PostgreSQL"). -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
         <!-- H2 — test-only in-memory database -->
@@ -320,7 +329,16 @@
                         <artifactId>dependency-check-maven</artifactId>
                         <version>10.0.4</version>
                         <configuration>
+                            <!-- Fail the build on genuinely high-severity (CVSS ≥ 8) findings. -->
                             <failBuildOnCVSS>8</failBuildOnCVSS>
+                            <!-- A transient NVD outage (e.g. HTTP 524 / throttling without an API
+                                 key) must not break CI — log and continue rather than fail. Real
+                                 CVE findings are still enforced via failBuildOnCVSS when data loads. -->
+                            <failOnError>false</failOnError>
+                            <!-- Use an NVD API key when supplied (much faster, avoids throttling). -->
+                            <nvdApiKey>${nvd.api.key}</nvdApiKey>
+                            <!-- Reuse the cached NVD database for 24h instead of re-downloading. -->
+                            <nvdValidForHours>24</nvdValidForHours>
                         </configuration>
                         <executions>
                             <execution><goals><goal>check</goal></goals></execution>
