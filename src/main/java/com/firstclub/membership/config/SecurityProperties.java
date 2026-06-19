@@ -21,8 +21,11 @@ public class SecurityProperties {
 
     @Data
     public static class Jwt {
+        /** The built-in development signing secret — never acceptable in production. */
+        public static final String DEFAULT_SECRET =
+                "dev-only-change-me-this-secret-must-be-at-least-32-bytes-long-0123456789";
         /** HMAC-SHA256 signing secret — must be at least 32 bytes. */
-        private String secret = "dev-only-change-me-this-secret-must-be-at-least-32-bytes-long-0123456789";
+        private String secret = DEFAULT_SECRET;
         private long expirationMinutes = 120;
     }
 
@@ -39,9 +42,13 @@ public class SecurityProperties {
 
     @Data
     public static class Seed {
+        /** Built-in demo passwords — never acceptable in production. */
+        public static final String DEFAULT_ADMIN_PASSWORD = "admin123";
+        public static final String DEFAULT_USER_PASSWORD = "demo123";
+
         private String adminUsername = "admin";
-        private String adminPassword = "admin123";
+        private String adminPassword = DEFAULT_ADMIN_PASSWORD;
         private String userUsername = "demo";
-        private String userPassword = "demo123";
+        private String userPassword = DEFAULT_USER_PASSWORD;
     }
 }

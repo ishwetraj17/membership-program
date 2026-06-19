@@ -8,12 +8,13 @@ spring:
   flyway:
     clean-disabled: true  # Never allow flyway:clean in production
 
-# Restrict actuator exposure in prod — only /actuator/health for load-balancer checks
+# Restrict actuator exposure in prod. Only health (public, for load-balancer checks) and
+# prometheus (ADMIN-only — see SecurityConfig) are surfaced; everything else stays hidden.
 management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       show-details: never  # Don't leak system internals to unauthenticated callers

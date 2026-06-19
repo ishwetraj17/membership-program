@@ -79,7 +79,11 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
+                // Health is public for load-balancer / k8s probes; the Prometheus scrape
+                // endpoint (and any other actuator endpoint) is operator-only.
+                .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                .requestMatchers("/actuator/prometheus", "/actuator/metrics/**").hasRole("ADMIN")
+                .requestMatchers("/actuator/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/membership/health").permitAll()
                 // Self-registration
                 .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()

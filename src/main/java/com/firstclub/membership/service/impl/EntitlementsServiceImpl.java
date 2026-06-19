@@ -102,7 +102,9 @@ public class EntitlementsServiceImpl implements EntitlementsService {
 
     @Override
     public void invalidate(Long userId) {
-        meterRegistry.counter("membership.entitlements.invalidation").increment();
+        // Same tag keys as invalidateAll() — Prometheus rejects meters that share a name but differ
+        // in tag keys, so both carry a 'scope' tag (here: user, there: all).
+        meterRegistry.counter("membership.entitlements.invalidation", "scope", "user").increment();
         Cache cache = cacheManager.getCache(CACHE);
         if (cache != null) {
             try {

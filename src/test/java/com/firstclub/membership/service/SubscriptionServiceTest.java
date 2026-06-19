@@ -78,9 +78,9 @@ class SubscriptionServiceTest {
                 tierEvaluationService, paymentGateway, membershipConfig, txManager,
                 savingsService, introductoryOfferService, trialConversionProcessor,
                 savingsLedgerRepository, meterRegistry, fixedClock);
-        lenient().when(paymentGateway.charge(any(), any(), any()))
+        lenient().when(paymentGateway.charge(any()))
                 .thenReturn(new PaymentGateway.PaymentResult("pay_test", true));
-        lenient().when(paymentGateway.refund(any(), any()))
+        lenient().when(paymentGateway.refund(any()))
                 .thenReturn(new PaymentGateway.PaymentResult("rfnd_test", true));
         // TransactionTemplate over the mock manager just runs the callback inline.
         lenient().when(txManager.getTransaction(any()))
@@ -135,7 +135,7 @@ class SubscriptionServiceTest {
             assertThat(result.getTier()).isEqualTo("SILVER");
             // saved twice: PENDING (reserve) then ACTIVE (activate after charge).
             verify(subscriptionRepository, atLeastOnce()).save(any(Subscription.class));
-            verify(paymentGateway).charge(eq(10L), any(), any());
+            verify(paymentGateway).charge(argThat(r -> "10".equals(r.customerReference())));
         }
 
         @Test @DisplayName("duplicate active subscription — throws MembershipException")
@@ -172,7 +172,7 @@ class SubscriptionServiceTest {
             Subscription pending = buildActiveSubscription();
             when(subscriptionRepository.save(any(Subscription.class))).thenReturn(pending);
             when(subscriptionRepository.findById(pending.getId())).thenReturn(Optional.of(pending));
-            when(paymentGateway.charge(any(), any(), any()))
+            when(paymentGateway.charge(any()))
                     .thenReturn(new PaymentGateway.PaymentResult(null, false)); // declined
 
             assertThatThrownBy(() -> subscriptionService.createSubscription(
@@ -228,13 +228,13 @@ class SubscriptionServiceTest {
             Subscription active = buildActiveSubscription(); // full period remaining, paid 299
             when(subscriptionRepository.findById(active.getId())).thenReturn(Optional.of(active));
             when(subscriptionRepository.save(active)).thenReturn(active);
-            when(paymentGateway.refund(any(), any()))
+            when(paymentGateway.refund(any()))
                     .thenReturn(new PaymentGateway.PaymentResult("rfnd_1", true));
 
             SubscriptionDTO result = subscriptionService.cancelSubscription(active.getId(), "done");
 
             assertThat(result.getStatus()).isEqualTo(Subscription.SubscriptionStatus.CANCELLED);
-            verify(paymentGateway).refund(any(), any());
+            verify(paymentGateway).refund(any());
             // A REFUNDED event is published in addition to CANCELLED.
             verify(outboxEventService).publish(any(), any(), eq("REFUNDED"), any());
         }
@@ -566,7 +566,8 @@ class SubscriptionServiceTest {
             subscriptionService.processRenewals();
 
             // Charged outside the tx, then applied.
-            verify(paymentGateway).charge(eq(due.getUser().getId()), any(), any());
+            verify(paymentGateway).charge(argThat(r ->
+                    String.valueOf(due.getUser().getId()).equals(r.customerReference())));
             verify(renewalProcessor).applyRenewal(eq(due), any());
         }
 
@@ -591,7 +592,7 @@ class SubscriptionServiceTest {
             // Both subscriptions must be attempted regardless of sub1's failure (it rolls back + refunds alone).
             verify(renewalProcessor).applyRenewal(eq(sub1), any());
             verify(renewalProcessor).applyRenewal(eq(sub2), any());
-            verify(paymentGateway).refund(any(), any()); // sub1's charge compensated
+            verify(paymentGateway).refund(any()); // sub1's charge compensated
         }
 
         @Test @DisplayName("bulk expiry records an EXPIRED event per expired subscription and expires by id")

@@ -26,6 +26,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.30</lombok.version>
+        <resilience4j.version>2.2.0</resilience4j.version>
         <!-- OWASP dependency-check: optional NVD API key (set -Dnvd.api.key=… or the NVD_API_KEY
              secret in CI for fast, reliable feed downloads). Empty by default = keyless. -->
         <nvd.api.key></nvd.api.key>
@@ -203,6 +204,33 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+
+        <!-- Prometheus registry — exposes Micrometer meters at /actuator/prometheus in the
+             OpenMetrics text format a Prometheus server can scrape. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Resilience4j — circuit breaker + retry guarding the (future) PSP calls. Core modules
+             wired programmatically (no annotation/AOP magic) so the protected operations and their
+             tuning are explicit and unit-testable; the micrometer module exposes CB-state and retry
+             metrics. PSP-agnostic: nothing here references a specific provider. -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-circuitbreaker</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-retry</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-micrometer</artifactId>
+            <version>${resilience4j.version}</version>
         </dependency>
 
         <!-- Structured JSON logging (used by the prod logback profile) -->

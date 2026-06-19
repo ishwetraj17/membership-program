@@ -10,6 +10,7 @@ import com.firstclub.membership.repository.CouponRedemptionRepository;
 import com.firstclub.membership.repository.CouponRepository;
 import com.firstclub.membership.service.AuditService;
 import com.firstclub.membership.service.CouponService;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class CouponServiceImpl implements CouponService {
     private final CouponRedemptionRepository redemptionRepository;
     private final AuditService auditService;
     private final Clock clock;
+    private final MeterRegistry meterRegistry;
 
     @Override
     @Transactional
@@ -98,6 +100,8 @@ public class CouponServiceImpl implements CouponService {
                 .discountAmount(discount)
                 .redeemedAt(LocalDateTime.now(clock))
                 .build());
+
+        meterRegistry.counter("membership.coupon.redeemed", "code", coupon.getCode()).increment();
 
         return RedeemCouponResponse.builder()
                 .code(coupon.getCode())

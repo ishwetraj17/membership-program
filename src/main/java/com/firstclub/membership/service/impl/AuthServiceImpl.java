@@ -11,12 +11,11 @@ import com.firstclub.membership.exception.MembershipException;
 import com.firstclub.membership.repository.AppAccountRepository;
 import com.firstclub.membership.repository.RefreshTokenRepository;
 import com.firstclub.membership.security.JwtService;
+import com.firstclub.membership.security.LoginAttemptService;
 import com.firstclub.membership.service.AuditService;
 import com.firstclub.membership.service.AuthService;
 import com.firstclub.membership.service.UserService;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import jakarta.annotation.PostConstruct;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -30,7 +29,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -48,16 +46,8 @@ public class AuthServiceImpl implements AuthService {
     private final AuditService auditService;
     private final PlatformTransactionManager txManager;
     private final Clock clock;
-
-    /** Per-username failed-login counter; entries self-expire after the lockout window. */
-    private Cache<String, Integer> failedAttempts;
-
-    @PostConstruct
-    void initLockout() {
-        failedAttempts = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofMinutes(securityProperties.getLockout().getWindowMinutes()))
-                .build();
-    }
+    private final LoginAttemptService loginAttemptService;
+    private final MeterRegistry meterRegistry;
 
     @Override
     @Transactional
@@ -90,9 +80,8 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public LoginResponse login(LoginRequest request) {
         String username = request.getUsername();
-        int maxAttempts = securityProperties.getLockout().getMaxAttempts();
-        Integer fails = failedAttempts.getIfPresent(username);
-        if (fails != null && fails >= maxAttempts) {
+        if (loginAttemptService.isLockedOut(username)) {
+            meterRegistry.counter("membership.auth.login", "result", "locked").increment();
             auditService.record(username, "ACCOUNT_LOCKED", "login blocked while locked");
             throw new MembershipException(
                     "Account temporarily locked due to repeated failed logins — try again later",
@@ -102,11 +91,13 @@ public class AuthServiceImpl implements AuthService {
             authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(username, request.getPassword()));
         } catch (AuthenticationException e) {
-            failedAttempts.put(username, (fails == null ? 0 : fails) + 1);
+            loginAttemptService.recordFailure(username);
+            meterRegistry.counter("membership.auth.login", "result", "failure").increment();
             auditService.record(username, "LOGIN_FAILURE", "bad credentials");
             throw e;
         }
-        failedAttempts.invalidate(username); // reset on success
+        loginAttemptService.recordSuccess(username); // reset on success
+        meterRegistry.counter("membership.auth.login", "result", "success").increment();
         auditService.record(username, "LOGIN_SUCCESS", null);
 
         AppAccount account = accountRepository.findByUsername(username).orElseThrow();

@@ -13,8 +13,10 @@ import com.firstclub.membership.repository.MembershipPlanRepository;
 import com.firstclub.membership.repository.SavingsLedgerRepository;
 import com.firstclub.membership.repository.SubscriptionEventRepository;
 import com.firstclub.membership.repository.SubscriptionRepository;
+import com.firstclub.membership.service.ChargeRequest;
 import com.firstclub.membership.service.IntroductoryOfferService;
 import com.firstclub.membership.service.PaymentGateway;
+import com.firstclub.membership.service.RefundRequest;
 import com.firstclub.membership.service.SavingsService;
 import com.firstclub.membership.service.SubscriptionService;
 import com.firstclub.membership.service.TierEvaluationService;
@@ -131,8 +133,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
 
         PaymentGateway.PaymentResult payment;
         try {
-            payment = paymentGateway.charge(pending.getUser().getId(), pending.getPaidAmount(),
-                    "CREATE " + pending.getPlan().getName());
+            payment = charge(pending.getUser().getId(), pending.getPaidAmount(),
+                    "CREATE " + pending.getPlan().getName(), "charge:create:" + pendingId);
         } catch (RuntimeException e) {
             finalizeFailed(pendingId, "Payment error", null);
             throw new MembershipException("Payment failed — please retry", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
@@ -217,7 +219,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         inTx(() -> {
             Subscription sub = findById(pendingId);
             if (paymentReference != null) {
-                paymentGateway.refund(paymentReference, sub.getPaidAmount());
+                refund(paymentReference, sub.getPaidAmount(), "refund:" + paymentReference);
             }
             sub.setStatus(Subscription.SubscriptionStatus.CANCELLED);
             sub.setCancelledAt(now());
@@ -302,8 +304,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 }
                 String reference;
                 try {
-                    reference = paymentGateway.charge(trial.getUser().getId(), trial.getPlan().getPrice(),
-                            "TRIAL_CONVERSION " + trial.getPlan().getName()).reference();
+                    reference = charge(trial.getUser().getId(), trial.getPlan().getPrice(),
+                            "TRIAL_CONVERSION " + trial.getPlan().getName(),
+                            "charge:trial:" + trial.getId() + ":" + trial.getTrialEndDate()).reference();
                 } catch (Exception e) {
                     trialConversionProcessor.expire(trial);
                     meterRegistry.counter("membership.trial.expired", "reason", "charge_failed").increment();
@@ -316,7 +319,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                     meterRegistry.counter("membership.trial.converted").increment();
                     converted++;
                 } catch (Exception e) {
-                    paymentGateway.refund(reference, trial.getPlan().getPrice());
+                    refund(reference, trial.getPlan().getPrice(), "refund:" + reference);
                     log.error("Trial {} conversion apply failed — charge refunded", trial.getId(), e);
                 }
             } catch (Exception e) {
@@ -398,7 +401,10 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                     .findFirstBySubscriptionIdAndPaymentReferenceIsNotNullOrderByOccurredAtDesc(cancelled.getId())
                     .map(SubscriptionEvent::getPaymentReference)
                     .orElse(null);
-            String refundReference = paymentGateway.refund(originalReference, refund).reference();
+            String refundKey = originalReference != null
+                    ? "refund:" + originalReference
+                    : "refund:sub:" + cancelled.getId();
+            String refundReference = refund(originalReference, refund, refundKey).reference();
             // Stored negative so lifetime revenue nets out the refund.
             recordEvent(cancelled, SubscriptionEvent.EventType.REFUNDED, refund.negate(), refundReference);
             log.info("Refunded {} on cancellation of subscription {}", refund, cancelled.getId());
@@ -428,7 +434,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             if (s.getStatus() != Subscription.SubscriptionStatus.EXPIRED) {
                 throw new MembershipException("Only expired subscriptions can be renewed", "INVALID_SUBSCRIPTION_STATUS");
             }
-            return new ChargeContext(s.getUser().getId(), s.getPlan().getPrice(), s.getPlan().getName());
+            return new ChargeContext(s.getUser().getId(), s.getPlan().getPrice(), s.getPlan().getName(),
+                    "charge:renew:" + subscriptionId + ":" + s.getEndDate());
         });
 
         String ref = chargeOrThrow(ctx, "RENEWED ");
@@ -464,7 +471,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
 
         UpgradeContext ctx = inTx(() -> validateUpgrade(subscriptionId, newPlanId));
 
-        String ref = chargeOrThrow(new ChargeContext(ctx.userId(), ctx.charge(), ctx.newPlanName()), "UPGRADE ");
+        String ref = chargeOrThrow(new ChargeContext(ctx.userId(), ctx.charge(), ctx.newPlanName(),
+                ctx.idempotencyKey()), "UPGRADE ");
         try {
             return inTx(() -> applyUpgrade(subscriptionId, newPlanId, ctx.charge(), ref));
         } catch (RuntimeException e) {
@@ -505,7 +513,13 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             throw MembershipException.invalidPlanTransition(currentPlan.getName(), newPlan.getName());
         }
         BigDecimal charge = calculateUpgradeCharge(subscription, currentPlan, newPlan, now());
-        return new UpgradeContext(subscription.getUser().getId(), charge, newPlan.getName());
+        // Idempotency key must be stable across retries of THIS upgrade yet unique per upgrade event.
+        // The subscription's current startDate is reset on every upgrade/downgrade, so re-upgrading to
+        // the same plan later yields a different key (a genuinely new charge), while a retry before the
+        // upgrade is applied reuses it (the PSP dedupes — no double charge).
+        String idempotencyKey = "charge:upgrade:" + subscriptionId + ":" + newPlanId
+                + ":" + subscription.getStartDate();
+        return new UpgradeContext(subscription.getUser().getId(), charge, newPlan.getName(), idempotencyKey);
     }
 
     /** Applies the validated upgrade after a successful charge. */
@@ -537,7 +551,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         }
         PaymentGateway.PaymentResult payment;
         try {
-            payment = paymentGateway.charge(ctx.userId(), ctx.amount(), descriptionPrefix + ctx.planName());
+            payment = charge(ctx.userId(), ctx.amount(), descriptionPrefix + ctx.planName(), ctx.idempotencyKey());
         } catch (RuntimeException e) {
             throw new MembershipException("Payment failed — please retry", "PAYMENT_FAILED", HttpStatus.PAYMENT_REQUIRED);
         }
@@ -549,12 +563,48 @@ public class SubscriptionServiceImpl implements SubscriptionService {
 
     private void refundIfCharged(String reference, BigDecimal amount) {
         if (reference != null) {
-            paymentGateway.refund(reference, amount);
+            refund(reference, amount, "refund:" + reference);
         }
     }
 
-    private record ChargeContext(Long userId, BigDecimal amount, String planName) {}
-    private record UpgradeContext(Long userId, BigDecimal charge, String newPlanName) {}
+    // ─── PSP request construction ─────────────────────────────────────────────
+    // Every charge/refund carries a DETERMINISTIC idempotency key derived from business identity
+    // (operation + subscription + billing period). The same logical charge always produces the same
+    // key, so a retry — at the application level or inside the resilience layer — is deduplicated by
+    // the PSP and can never double-charge. The correlation id stitches our logs to the provider's.
+
+    private static final String CURRENCY = "INR";
+
+    private PaymentGateway.PaymentResult charge(Long userId, BigDecimal amount, String description,
+                                                String idempotencyKey) {
+        return paymentGateway.charge(ChargeRequest.builder()
+                .idempotencyKey(idempotencyKey)
+                .correlationId(correlationId())
+                .customerReference(String.valueOf(userId))
+                .amount(amount)
+                .currency(CURRENCY)
+                .description(description)
+                .build());
+    }
+
+    private PaymentGateway.PaymentResult refund(String originalReference, BigDecimal amount,
+                                                String idempotencyKey) {
+        return paymentGateway.refund(RefundRequest.builder()
+                .idempotencyKey(idempotencyKey)
+                .correlationId(correlationId())
+                .originalReference(originalReference)
+                .amount(amount)
+                .build());
+    }
+
+    /** Trace correlation id from the request MDC (set by CorrelationIdFilter), or a fresh id for background jobs. */
+    private String correlationId() {
+        String id = org.slf4j.MDC.get("requestId");
+        return id != null ? id : java.util.UUID.randomUUID().toString();
+    }
+
+    private record ChargeContext(Long userId, BigDecimal amount, String planName, String idempotencyKey) {}
+    private record UpgradeContext(Long userId, BigDecimal charge, String newPlanName, String idempotencyKey) {}
 
     @Override
     public SubscriptionDTO downgradeSubscription(Long subscriptionId, Long newPlanId) {
@@ -673,8 +723,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             // then apply in its own REQUIRES_NEW tx; refund if applying fails after a successful charge.
             String reference;
             try {
-                reference = paymentGateway.charge(subscription.getUser().getId(),
-                        subscription.getPlan().getPrice(), "RENEWED " + subscription.getPlan().getName()).reference();
+                reference = charge(subscription.getUser().getId(), subscription.getPlan().getPrice(),
+                        "RENEWED " + subscription.getPlan().getName(),
+                        "charge:autorenew:" + subscription.getId() + ":" + subscription.getNextBillingDate()).reference();
             } catch (Exception e) {
                 log.error("Auto-renewal charge failed for subscription {} — skipped", subscription.getId(), e);
                 continue;
@@ -683,7 +734,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                 renewalProcessor.applyRenewal(subscription, reference);
                 count++;
             } catch (Exception e) {
-                paymentGateway.refund(reference, subscription.getPlan().getPrice());
+                refund(reference, subscription.getPlan().getPrice(), "refund:" + reference);
                 log.error("Auto-renewal apply failed for subscription {} — charge refunded", subscription.getId(), e);
             }
         }

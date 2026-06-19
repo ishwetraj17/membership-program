@@ -27,8 +27,10 @@ import java.util.Set;
 @Slf4j
 public class AuthAccountInitializer implements ApplicationRunner {
 
-    /** The built-in demo passwords — never acceptable in production. */
-    private static final Set<String> DEFAULT_PASSWORDS = Set.of("admin123", "demo123");
+    /** The built-in demo passwords — never acceptable in production (single source: SecurityProperties). */
+    private static final Set<String> DEFAULT_PASSWORDS = Set.of(
+            SecurityProperties.Seed.DEFAULT_ADMIN_PASSWORD,
+            SecurityProperties.Seed.DEFAULT_USER_PASSWORD);
 
     private final AppAccountRepository accountRepository;
     private final PasswordEncoder passwordEncoder;

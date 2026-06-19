@@ -29,7 +29,9 @@ spring:
   cache:
     type: caffeine
     caffeine:
-      spec: maximumSize=200,expireAfterWrite=10m
+      # recordStats enables Caffeine hit/miss statistics so Spring Boot binds cache.* metrics
+      # (cache.gets{result=hit|miss}, cache.puts, cache.evictions) per named cache.
+      spec: maximumSize=200,expireAfterWrite=10m,recordStats
 
   jackson:
     serialization:
@@ -49,20 +51,32 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # 'prometheus' exposes /actuator/prometheus for scraping. It is restricted to ADMIN in
+        # SecurityConfig (only /actuator/health is public), so listing it here is safe.
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
       probes:
         enabled: true   # exposes /actuator/health/liveness and /readiness
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      # Stamp every meter with the application name so a multi-node Prometheus/Grafana setup
+      # can group and filter series by service.
+      application: ${spring.application.name}
   health:
     # Redis is an optional cache backend (enabled only under the 'redis' profile),
     # so its health probe is off by default to avoid a DOWN status without Redis.
     redis:
       enabled: false
 
-# Per-client API rate limiting (Bucket4j). Shared limits across nodes would use the
-# Bucket4j Redis backend; this single-node default is in-process.
+# Per-client API rate limiting. The in-process default (Bucket4j) is used by LocalRateLimiter;
+# under the 'redis' profile RedisRateLimiter shares the same capacity across all pods. These two
+# values drive both strategies, so the limit is identical regardless of where the counter lives.
 rate-limit:
   capacity: 100
   refill-period-seconds: 60
@@ -79,6 +93,30 @@ outbox:
 entitlements:
   cache:
     ttl-seconds: 300
+
+# Payment architecture (PSP-agnostic). No provider is bound here — these settings configure the
+# resilience and timeout policy a future PSP adapter inherits.
+payment:
+  # Outbound HTTP timeouts for the PSP adapter (consumed by PaymentClientFactory). Never let a slow
+  # provider pin a request thread.
+  client:
+    connect-timeout: 2s
+    read-timeout: 5s
+    write-timeout: 5s
+  # Circuit breaker + retry around charge/refund/recurring billing (Resilience4j).
+  resilience:
+    circuit-breaker:
+      failure-rate-threshold: 50      # open at 50% failures over the window
+      sliding-window-size: 20
+      minimum-number-of-calls: 10
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 5
+      slow-call-duration-threshold: 8s
+      slow-call-rate-threshold: 100
+    retry:
+      max-attempts: 3                 # 1 try + 2 retries, transient failures only
+      wait-duration: 200ms
+      backoff-multiplier: 2.0
 
 springdoc:
   api-docs:

@@ -90,6 +90,7 @@ This is the primary way to run the project locally. One command resets the envir
 | Health | http://localhost:8080/api/v1/membership/health |
 | Analytics | http://localhost:8080/api/v1/membership/analytics |
 | Actuator | http://localhost:8080/actuator/health |
+| Prometheus metrics | http://localhost:8080/actuator/prometheus (ADMIN only — see [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)) |
 
 **Prerequisites:**
 - Java 17+, Maven 3.6+
